@@ -2,3 +2,7 @@
 node_modules
 .wrangler
 dist
+
+# Мусор macOS и временное состояние инструментов — не часть продукта.
+.DS_Store
+.omc/
