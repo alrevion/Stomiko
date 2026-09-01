@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"cat > scripts/_tpl.mts <<'EOF'\\n/** Кабинет из шаблона должен не «выглядеть похоже», а СЧИТАТЬ себестоимость. */\\nimport { createHmac } from 'node:crypto';\\nimport { readFileSync } from 'n...",
+  "error": "Exit code 1\n(eval):1: no such file or directory: scripts/_tpl.mts\nundefined\n ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL  Command \"tsx\" not found\n\nDid you mean \"pnpm exec tsc\"?",
+  "timestamp": "2026-09-01T11:23:47.523Z",
+  "retry_count": 1
+}

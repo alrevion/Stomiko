@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"cd /Users/wizbort-pc/Desktop/Arbeiten/Alrevion/apps/systems/Stomiko && python3 - <<'PY'\\nimport os\\nos.chdir('/Users/wizbort-pc/Desktop/Arbeiten/Alrevion/apps/systems/Stomiko')\\n\\n# 1. Экр...",
+  "error": "Exit code 2\nинтерфейс, cron и сторож готовы\nsrc/index.ts(663,7): error TS2345: Argument of type 'PromiseLike<any>' is not assignable to parameter of type 'Promise<any>'.\n  Type 'PromiseLike<any>' is missing the following properties from type 'Promise<any>': catch, finally, [Symbol.toStringTag]",
+  "timestamp": "2026-09-01T12:15:37.190Z",
+  "retry_count": 1
+}

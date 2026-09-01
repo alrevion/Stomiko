@@ -1,0 +1,18 @@
+name = "stomiko-api"
+main = "src/index.ts"
+compatibility_date = "2026-08-01"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "../miniapp/public"
+binding = "ASSETS"
+# not_found_handling НЕ ставим: при "single-page-application" все несовпавшие
+# пути отдают index.html, НЕ доходя до воркера, и /api/* вернул бы HTML.
+# По умолчанию несовпавшее уходит в воркер, где его ловит catch-all.
+
+# Секреты (wrangler secret put ...): SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, TELEGRAM_BOT_TOKEN
+
+# Напоминания. Каждые 15 минут: окно поиска ±30 минут вокруг цели, поэтому
+# опоздание планировщика не приводит к пропущенному напоминанию.
+[triggers]
+crons = ["*/15 * * * *"]

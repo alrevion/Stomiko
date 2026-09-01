@@ -1,0 +1,23 @@
+# Скопируйте в .dev.vars и заполните. .dev.vars в git не попадает.
+
+SUPABASE_URL=https://pvtfksnhqdcodoyutfym.supabase.co
+
+# Панель Supabase → Settings → API → service_role (secret).
+# Ключ ОБХОДИТ RLS: живёт только в секретах Worker'а, в клиентский бандл
+# не попадает никогда.
+SUPABASE_SERVICE_ROLE_KEY=
+
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_BOT_USERNAME=stomiko_bot
+TELEGRAM_WEBHOOK_SECRET=
+
+# Токен платёжного провайдера из BotFather. Пусто — платим звёздами (XTR),
+# для них договор с провайдером не нужен.
+TELEGRAM_PROVIDER_TOKEN=
+
+# Второй слой изоляции кабинетов: обращения к таблицам идут под токеном
+# с claim tenant_id, и политика в базе отсекает чужое сама. Панель Supabase →
+# Settings → API → JWT Settings. Пока пусто, воркер работает под service_role
+# и изоляцию держит только код.
+SUPABASE_JWT_SECRET=
+SUPABASE_ANON_KEY=
