@@ -945,8 +945,16 @@ async function docPatients(query = '') {
 
 async function docPatient(patientId) {
   spinner('Загрузка карточки…');
-  const p = await api(`/doctor/patients/${patientId}`);
-  S.d.patient = p;
+  // План и деньги — тем же заходом: врач смотрит на них вместе с историей,
+  // а не отдельным путешествием по разделам.
+  // Имя переменной НЕ money: так называется форматтер чисел, и локальная
+  // переменная перекрыла бы его внутри всей функции.
+  const [p, fin] = await Promise.all([
+    api(`/doctor/patients/${patientId}`),
+    api(`/doctor/patients/${patientId}/plans`).catch(() => ({ plans: [], balance: { debt: 0, billed: 0, paid: 0 }, payments: [] })),
+  ]);
+  S.d.patient = { ...p, id: patientId };
+  S.d.money = fin;
 
   const upcoming = p.appointments.filter((a) => a.status === 'scheduled' && new Date(a.startsAt) >= new Date());
   const spent = p.visits.reduce((s, v) => s + Number(v.revenue), 0);
@@ -977,6 +985,36 @@ async function docPatient(patientId) {
       <div class="card ok">${upcoming.map((a) => `<div class="row">
         <span>${esc(a.service ?? 'без услуги')}${a.note ? `<br><span class="muted">${esc(a.note)}</span>` : ''}</span>
         <span class="mono">${dateLabel(a.startsAt.slice(0, 10), { day: 'numeric', month: 'short' })}, ${hhmm(a.startsAt)}</span>
+      </div>`).join('')}</div>` : ''}
+
+      <div class="sectiontitle">Лечение и деньги</div>
+      <div class="card ${S.d.money.balance.debt > 0 ? 'warn' : ''}">
+        <div class="row"><span class="muted">Оказано услуг на</span>
+          <span class="mono">${money(S.d.money.balance.billed)} сум</span></div>
+        <div class="row"><span class="muted">Внесено</span>
+          <span class="mono">${money(S.d.money.balance.paid)} сум</span></div>
+        <div class="row"><span class="name">Долг</span>
+          <span class="mono name">${money(S.d.money.balance.debt)} сум</span></div>
+        <button class="mini" data-act="pay">Принять оплату</button>
+      </div>
+
+      ${S.d.money.plans.length ? `<div class="card">${S.d.money.plans.map((pl) => `
+        <div class="stockrow" data-tplan="${pl.id}">
+          <div class="body">
+            <div class="name">${esc(pl.title)}</div>
+            <div class="muted">${pl.done} из ${pl.items} · ${
+              pl.status === 'draft' ? 'черновик' : pl.status === 'active' ? 'у пациента'
+              : pl.status === 'done' ? 'выполнен' : 'отменён'} · ваша часть ${money(pl.margin)}</div>
+          </div>
+          <div class="qty-val mono">${money(pl.revenue)}<small>сум</small></div>
+        </div>`).join('')}</div>` : ''}
+      <button class="mini" data-act="newplan">+ Новый план лечения</button>
+
+      ${S.d.money.payments.length ? `<div class="sectiontitle">Платежи</div>
+      <div class="card">${S.d.money.payments.slice(0, 8).map((x) => `<div class="row">
+        <span>${({ cash: 'наличные', card: 'карта', transfer: 'перевод', other: 'иначе' })[x.method] ?? x.method}${
+          x.note ? `<br><span class="muted">${esc(x.note)}</span>` : ''}</span>
+        <span class="mono">${money(x.amount)} · ${dateLabel(String(x.at).slice(0, 10), { day: 'numeric', month: 'short' })}</span>
       </div>`).join('')}</div>` : ''}
 
       <div class="sectiontitle">История приёмов</div>
@@ -1017,6 +1055,230 @@ async function docPatient(patientId) {
         </div>`).join('')}</div>` : ''}
     </main>
   `);
+}
+
+/* ── План лечения ──────────────────────────────────────────────────────
+   Смысл не в списке услуг с ценами — такой список есть у всех. Смысл во
+   второй колонке: у каждой услуги есть техкарта, у техкарты нормы расхода,
+   значит план суммируется и в затраты тоже. Врач видит, сколько заработает,
+   ДО того как предложит план пациенту. */
+
+const itemCost = (i) => (i.costBase ?? 0) + (i.costPerUnit ?? 0) * (i.quantity ?? 1);
+
+/** Набранное в полях втягиваем ДО перерисовки, иначе правки теряются молча. */
+function readPlanForm() {
+  const t = S.d.tplan;
+  if (!t) return;
+  t.title = document.getElementById('plantitle')?.value ?? t.title;
+  document.querySelectorAll('[data-titem]').forEach((el) => {
+    const i = t.items[Number(el.dataset.titem)];
+    if (!i || i.status === 'done') return;
+    const tooth = el.querySelector('.tooth')?.value ?? '';
+    const price = el.querySelector('.tprice')?.value ?? '';
+    i.tooth = tooth.trim();
+    if (price !== '') i.price = Math.max(0, Number(price.replace(/\s/g, '')) || 0);
+  });
+}
+
+async function docPlanEdit(planId) {
+  spinner('Загрузка прайса…');
+  const [{ services }, plan] = await Promise.all([
+    api('/doctor/services?withCost=1'),
+    planId ? api(`/doctor/plans/${planId}`) : Promise.resolve(null),
+  ]);
+  const byId = new Map(services.map((s) => [s.id, s]));
+
+  S.d.tplan = {
+    planId: planId ?? null,
+    patientId: plan?.patient?.id ?? S.d.patient?.id,
+    patientName: plan?.patient?.name ?? S.d.patient?.name ?? '',
+    title: plan?.title ?? 'План лечения',
+    status: plan?.status ?? 'draft',
+    services,
+    items: (plan?.items ?? []).map((i) => ({
+      serviceId: i.serviceId, service: i.service, unit: i.unit,
+      tooth: i.tooth ?? '', quantity: i.quantity, price: Number(i.price),
+      stage: i.stage, status: i.status,
+      costBase: byId.get(i.serviceId)?.costBase ?? 0,
+      costPerUnit: byId.get(i.serviceId)?.costPerUnit ?? 0,
+    })),
+  };
+  drawPlanEdit();
+}
+
+function drawPlanEdit() {
+  const t = S.d.tplan;
+  const live = t.items.filter((i) => i.status !== 'cancelled');
+  const revenue = live.reduce((s, i) => s + i.price, 0);
+  const cost = live.reduce((s, i) => s + itemCost(i), 0);
+  const stages = [...new Set(live.map((i) => i.stage))].sort((a, b) => a - b);
+
+  render(`
+    <header><h1>${t.planId ? 'Правка плана' : 'Новый план'}</h1>
+      <span class="sub">${esc(t.patientName)}</span></header>
+    <main>
+      <div class="card">
+        <label class="fieldlabel">Название плана</label>
+        <input class="field" id="plantitle" value="${esc(t.title)}" placeholder="Лечение 26 зуба">
+      </div>
+
+      ${stages.map((st) => `
+        <div class="sectiontitle">Этап ${st}${st === 1 ? ' — сейчас' : ''}</div>
+        ${live.map((i, idx) => [i, idx]).filter(([i]) => i.stage === st).map(([i, idx]) => `
+        <div class="card ${i.status === 'done' ? 'ok' : ''}" data-titem="${idx}">
+          <div class="row">
+            <span class="name">${esc(i.service)}</span>
+            <span class="mono">${money(i.price)}</span>
+          </div>
+          ${i.status === 'done' ? `
+            <div class="note" style="margin:6px 0 0">Уже выполнено — правке не подлежит.</div>`
+          : `
+          <div class="planrow">
+            <label class="fieldlabel">Зуб</label>
+            <input class="field tooth" value="${esc(i.tooth)}" placeholder="26"
+                   inputmode="numeric" maxlength="2">
+            <label class="fieldlabel">Цена</label>
+            <input class="field tprice" value="${i.price}" inputmode="numeric">
+          </div>
+          <div class="row">
+            <span class="muted">${i.unit === 'canal' ? 'Каналов' : i.unit === 'surface' ? 'Поверхностей'
+              : i.unit === 'tooth' ? 'Зубов' : 'Количество'}</span>
+            <span class="qty">
+              <button class="mini" data-tq="${idx}:-">−</button>
+              <span class="qty-val mono">${i.quantity}</span>
+              <button class="mini" data-tq="${idx}:+">+</button>
+            </span>
+          </div>
+          <div class="row">
+            <span class="muted">Себестоимость</span>
+            <span class="mono">${money(itemCost(i))} сум</span>
+          </div>
+          <div class="row">
+            <button class="mini" data-tstage="${idx}:-">← этап</button>
+            <button class="mini" data-tstage="${idx}:+">этап →</button>
+            <button class="mini danger" data-trm="${idx}">Убрать</button>
+          </div>`}
+        </div>`).join('')}`).join('')}
+
+      ${live.length ? '' : '<div class="empty">Добавьте услуги из прайса.</div>'}
+      <button class="mini" data-act="addplanitem">+ Добавить услугу</button>
+
+      <div class="sectiontitle">Итог плана</div>
+      <div class="card">
+        <div class="row"><span class="muted">Пациент заплатит</span>
+          <span class="mono">${money(revenue)} сум</span></div>
+        <div class="row"><span class="muted">Материалы</span>
+          <span class="mono">${money(cost)} сум</span></div>
+        <div class="row"><span class="name">Останется вам</span>
+          <span class="mono name">${money(revenue - cost)} сум${
+            revenue ? ` · ${Math.round(100 * (revenue - cost) / revenue)}%` : ''}</span></div>
+        <div class="note">Материалы посчитаны по техкартам и сегодняшним ценам закупки.
+        Это прогноз: при списании цифра уточнится по реально израсходованным партиям.</div>
+      </div>
+    </main>
+    <button class="primary" data-act="saveplan">Сохранить</button>
+  `);
+  S.d.redraw = () => { readPlanForm(); drawPlanEdit(); };
+}
+
+/** Выбор услуги из прайса — тот же приём, что и подбор материала в техкарту. */
+async function docPlanPicker() {
+  const t = S.d.tplan;
+  render(`
+    <header><h1>Услуга из прайса</h1></header>
+    <main><div class="picker">
+      ${t.services.map((s) => `<button data-psvc="${s.id}">
+        <div class="name">${esc(s.name_ru)}</div>
+        <div class="price">${money(s.price)} сум · материалы ${money(s.costBase + s.costPerUnit)}${
+          s.unpricedLines ? ' · <b>есть материалы без цены</b>' : ''}</div>
+      </button>`).join('')}
+    </div></main>
+  `);
+}
+
+async function docPlan(planId) {
+  spinner('Загрузка плана…');
+  const p = await api(`/doctor/plans/${planId}`);
+  S.d.tplanView = p;
+  const t = p.totals;
+  const stages = [...new Set(p.items.map((i) => i.stage))].sort((a, b) => a - b);
+
+  render(`
+    <header><h1>${esc(p.title)}</h1>
+      <span class="sub">${esc(p.patient.name)} · ${
+        p.status === 'draft' ? 'черновик, пациент не видит'
+        : p.status === 'active' ? 'показан пациенту'
+        : p.status === 'done' ? 'выполнен' : 'отменён'}</span></header>
+    <main>
+      ${stages.map((st) => `
+        <div class="sectiontitle">Этап ${st}</div>
+        <div class="card">${p.items.filter((i) => i.stage === st).map((i) => `
+          <div class="row">
+            <span>${i.status === 'done' ? '✓ ' : ''}${esc(i.service)}${
+              i.tooth ? ` · зуб ${esc(i.tooth)}` : ''}${
+              i.quantity > 1 ? ` · ×${i.quantity}` : ''}</span>
+            <span class="mono">${money(i.price)}</span>
+          </div>`).join('')}</div>`).join('')}
+
+      <div class="sectiontitle">Деньги</div>
+      <div class="card">
+        <div class="row"><span class="muted">Пациент заплатит</span>
+          <span class="mono">${money(t.revenue)} сум</span></div>
+        <div class="row"><span class="muted">Материалы по техкартам</span>
+          <span class="mono">${money(t.cost)} сум</span></div>
+        <div class="row"><span class="name">Останется вам</span>
+          <span class="mono name">${money(t.margin)} сум${
+            Number(t.revenue) ? ` · ${Math.round(100 * t.margin / t.revenue)}%` : ''}</span></div>
+        ${Number(t.unpricedLines) ? `<div class="note">В техкартах ${t.unpricedLines} строк
+        без цены — реальная себестоимость выше показанной. Проставьте цены на складе.</div>` : ''}
+        <div class="row"><span class="muted">Уже выполнено</span>
+          <span class="mono">${money(t.doneRevenue)} сум</span></div>
+        <div class="row"><span class="muted">Осталось сделать</span>
+          <span class="mono">${money(t.leftRevenue)} сум</span></div>
+      </div>
+
+      <div class="picker">
+        <button data-act="editplan"><div class="name">Изменить состав</div>
+          <div class="price">выполненное останется как есть</div></button>
+        ${p.status === 'draft' ? `<button data-act="activateplan">
+          <div class="name">Показать пациенту</div>
+          <div class="price">придёт сообщение в Telegram</div></button>` : ''}
+        ${p.status === 'active' ? `<button data-act="closeplan">
+          <div class="name">Закрыть план</div>
+          <div class="price">лечение завершено</div></button>` : ''}
+      </div>
+      ${p.items.some((i) => i.status === 'done') ? '' : `
+      <button class="mini danger" data-act="delplan">Удалить план</button>`}
+    </main>
+  `);
+}
+
+/** Оплата. Счетов нет: долг — это оказанное минус внесённое. */
+function docPayment(patientId) {
+  const b = S.d.money?.balance ?? { debt: 0 };
+  render(`
+    <header><h1>Оплата</h1><span class="sub">${esc(S.d.patient?.name ?? '')}</span></header>
+    <main>
+      <div class="card ${b.debt > 0 ? 'warn' : 'ok'}">
+        <div class="row"><span class="muted">Долг сейчас</span>
+          <span class="mono name">${money(b.debt)} сум</span></div>
+      </div>
+      <div class="card">
+        <label class="fieldlabel">Сумма</label>
+        <input class="field" id="payamount" inputmode="numeric" placeholder="${b.debt > 0 ? b.debt : ''}">
+        <label class="fieldlabel">Чем платят</label>
+        <div class="picker row-picker">
+          ${[['cash','Наличные'],['card','Карта'],['transfer','Перевод'],['other','Иначе']]
+            .map(([k, label]) => `<button class="mini ${(S.d.payMethod ?? 'cash') === k ? 'on' : ''}"
+              data-pmethod="${k}">${label}</button>`).join('')}
+        </div>
+        <label class="fieldlabel">Комментарий — необязательно</label>
+        <input class="field" id="paynote" placeholder="аванс за первый этап">
+      </div>
+    </main>
+    <button class="primary" data-act="dopay" data-id="${patientId}">Принять оплату</button>
+  `);
+  setTimeout(() => document.getElementById('payamount')?.focus(), 80);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -1861,18 +2123,77 @@ async function awaitPhone(startsAt, attempts = 20) {
   toast('Номер пока не пришёл. Нажмите «Поделиться номером» в чате с ботом', true);
 }
 
+/**
+ * План лечения глазами пациента.
+ *
+ * Главный страх человека в частной стоматологии — «меня разводят». Против
+ * него работает не убеждение, а список: что именно сделают, в каком порядке,
+ * почём и что уже сделано. Себестоимости здесь нет и не приходит с сервера:
+ * пациенту отдаётся другой набор полей, а не тот же с погашенными колонками.
+ */
+function patPlan(planId) {
+  const p = (S.d.myPlans ?? []).find((x) => x.id === planId);
+  if (!p) return patMy();
+  const left = Number(p.total) - Number(p.donePart);
+
+  render(`
+    <header><h1>${esc(p.title)}</h1><span class="sub">${esc(p.cabinet)}</span></header>
+    <main>
+      ${p.stages.map((st) => `
+        <div class="sectiontitle">Этап ${st.stage}${
+          st.items.every((i) => i.status === 'done') ? ' — сделан' : ''}</div>
+        <div class="card">${st.items.map((i) => `
+          <div class="row">
+            <span>${i.status === 'done' ? '✓ ' : ''}${esc(i.service)}${
+              i.tooth ? ` · зуб ${esc(i.tooth)}` : ''}${i.quantity > 1 ? ` · ${i.quantity}` : ''}</span>
+            <span class="mono ${i.status === 'done' ? 'muted' : ''}">${money(i.price)}</span>
+          </div>`).join('')}</div>`).join('')}
+
+      <div class="sectiontitle">Деньги</div>
+      <div class="card">
+        <div class="row"><span class="muted">Весь план</span>
+          <span class="mono">${money(p.total)} сум</span></div>
+        <div class="row"><span class="muted">Уже сделано</span>
+          <span class="mono">${money(p.donePart)} сум</span></div>
+        <div class="row"><span class="muted">Осталось</span>
+          <span class="mono">${money(left)} сум</span></div>
+        <div class="row"><span class="name">${
+          Number(p.balance.debt) > 0 ? 'К оплате сейчас' : 'Задолженности нет'}</span>
+          <span class="mono name">${money(Math.max(0, Number(p.balance.debt)))} сум</span></div>
+        <div class="note">К оплате — только за то, что уже сделано. За будущие этапы
+        платить заранее не нужно.</div>
+      </div>
+    </main>
+  `);
+}
+
 async function patMy() {
   spinner('Загрузка…');
   // Записи по ВСЕМ кабинетам, где человек лечится, а не только по активному:
   // он может ходить к терапевту и к ортопеду, и держать это в двух местах —
   // значит заставлять его переключаться, чтобы увидеть свои же приёмы.
-  const { appointments } = await api('/me/appointments');
+  const [{ appointments }, plans] = await Promise.all([
+    api('/me/appointments'),
+    api('/me/plans').then((r) => r.plans).catch(() => []),
+  ]);
   S.d.myAppts = appointments;
+  S.d.myPlans = plans;
   render(`
     <header><h1>Мои записи</h1><span class="sub">${
       new Set(appointments.map((a) => a.tenantId)).size > 1
         ? `${new Set(appointments.map((a) => a.tenantId)).size} кабинета` : ''}</span></header>
     <main>
+      ${(S.d.myPlans ?? []).map((p) => `
+      <div class="card ${p.status === 'done' ? '' : 'ok'}" data-mplan="${p.id}">
+        <div class="row"><span class="name">${esc(p.title)}<br>
+          <span class="muted">${esc(p.cabinet)} · план лечения${
+            p.status === 'done' ? ' · завершён' : ''}</span></span>
+          <span class="mono">${money(p.total)}<small> сум</small></span></div>
+        <div class="note" style="margin-top:6px">${
+          Number(p.balance.debt) > 0
+            ? `К оплате за сделанное: ${money(p.balance.debt)} сум.`
+            : 'Задолженности нет.'} Нажмите, чтобы посмотреть этапы.</div>
+      </div>`).join('')}
       ${S.d.noNotifications ? `<div class="card warn">
         <div class="name">Включите уведомления</div>
         <div class="note" style="margin-top:6px">Мы не сможем предупредить вас, если приём
@@ -1905,7 +2226,7 @@ async function patMy() {
    ══════════════════════════════════════════════════════════════════════════ */
 
 document.addEventListener('click', async (e) => {
-  const el = e.target.closest('[data-day],[data-week],[data-appt],[data-act],[data-service],[data-q],[data-tc],[data-svc],[data-date],[data-time],[data-cancel],[data-resched],[data-rtime],[data-wd],[data-add],[data-rm],[data-rmov],[data-rmline],[data-material],[data-batch],[data-unit],[data-pick],[data-wsvc],[data-reason],[data-patient],[data-visit],[data-free],[data-tab],[data-mode],[data-tpl],[data-plan]');
+  const el = e.target.closest('[data-day],[data-week],[data-appt],[data-act],[data-service],[data-q],[data-tc],[data-svc],[data-date],[data-time],[data-cancel],[data-resched],[data-rtime],[data-tplan],[data-psvc],[data-tq],[data-trm],[data-tstage],[data-pmethod],[data-mplan],[data-wd],[data-add],[data-rm],[data-rmov],[data-rmline],[data-material],[data-batch],[data-unit],[data-pick],[data-wsvc],[data-reason],[data-patient],[data-visit],[data-free],[data-tab],[data-mode],[data-tpl],[data-plan]');
   if (!el) return;
   const d = el.dataset;
   haptic();
@@ -1981,6 +2302,36 @@ document.addEventListener('click', async (e) => {
     if (d.cancel) return go(patCancel, d.cancel);
     if (d.resched) return go(patReschedule, d.resched);
     if (d.rtime) return go(patReschedConfirm, d.rtime);
+    if (d.tplan) return go(docPlan, d.tplan);
+    if (d.mplan) return go(patPlan, d.mplan);
+    if (d.psvc) {
+      const svc = S.d.tplan.services.find((x) => x.id === d.psvc);
+      // Новая позиция попадает в последний этап: врач набирает план по
+      // порядку, и «в конец» — то, чего он ждёт. Перекинуть можно стрелками.
+      const last = S.d.tplan.items.reduce((m, i) => Math.max(m, i.stage), 1);
+      S.d.tplan.items.push({
+        serviceId: svc.id, service: svc.name_ru, unit: svc.unit_of_norm,
+        tooth: '', quantity: 1, price: Number(svc.price), stage: last, status: 'planned',
+        costBase: svc.costBase, costPerUnit: svc.costPerUnit,
+      });
+      return back();
+    }
+    if (d.tq) {
+      readPlanForm();
+      const [i, sign] = d.tq.split(':');
+      const item = S.d.tplan.items[Number(i)];
+      item.quantity = Math.max(1, item.quantity + (sign === '+' ? 1 : -1));
+      return drawPlanEdit();
+    }
+    if (d.tstage) {
+      readPlanForm();
+      const [i, sign] = d.tstage.split(':');
+      const item = S.d.tplan.items[Number(i)];
+      item.stage = Math.max(1, item.stage + (sign === '+' ? 1 : -1));
+      return drawPlanEdit();
+    }
+    if (d.trm) { readPlanForm(); S.d.tplan.items.splice(Number(d.trm), 1); return drawPlanEdit(); }
+    if (d.pmethod) { S.d.payMethod = d.pmethod; return docPayment(S.d.patient.id); }
 
     // Расписание: набранное в полях втягивается ДО любой правки состояния,
     // иначе перерисовка возвращает старое время и правка теряется молча.
@@ -2041,6 +2392,75 @@ document.addEventListener('click', async (e) => {
         if (typeof tg?.requestContact === 'function') tg.requestContact(() => {});
         else tg?.openTelegramLink?.(`https://t.me/${S.d.me?.bot ?? 'stomiko_bot'}?start=phone`);
         return awaitPhone(d.at);
+      }
+      case 'newplan': return go(docPlanEdit, null);
+      case 'editplan': return go(docPlanEdit, S.d.tplanView.id);
+      case 'addplanitem': { readPlanForm(); return go(docPlanPicker); }
+      case 'saveplan': {
+        readPlanForm();
+        const t = S.d.tplan;
+        const planned = t.items.filter((i) => i.status !== 'done');
+        if (!planned.length) return toast('Добавьте хотя бы одну услугу', true);
+        const badTooth = planned.find((i) => i.tooth && !/^[1-8][1-8]$/.test(i.tooth));
+        if (badTooth) return toast(`Зуб «${badTooth.tooth}» — не номер по FDI. Например 26.`, true);
+        el.disabled = true; el.textContent = 'Сохраняем…';
+        const r = await api('/doctor/plans', { method: 'POST', body: JSON.stringify({
+          planId: t.planId, patientId: t.patientId, title: t.title, status: t.status,
+          items: planned.map((i) => ({
+            serviceId: i.serviceId, tooth: i.tooth || null,
+            quantity: i.quantity, price: i.price, stage: i.stage })),
+        }) });
+        dropCache('patients');
+        // Возврат на сам план, а не назад: врач сохранил, чтобы посмотреть
+        // итог, — и итог должен открыться сразу.
+        S.stack.pop();
+        return go(docPlan, r.planId);
+      }
+      case 'activateplan': {
+        const p = S.d.tplanView;
+        el.disabled = true;
+        const r = await api('/doctor/plans', { method: 'POST', body: JSON.stringify({
+          planId: p.id, title: p.title, status: 'active',
+          items: p.items.filter((i) => i.status !== 'done').map((i) => ({
+            serviceId: i.serviceId, tooth: i.tooth, quantity: i.quantity,
+            price: Number(i.price), stage: i.stage })),
+        }) });
+        dropCache('patients');
+        toast(r.activated ? 'План отправлен пациенту' : 'План открыт пациенту');
+        return docPlan(p.id);
+      }
+      case 'closeplan': {
+        const p = S.d.tplanView;
+        el.disabled = true;
+        await api('/doctor/plans', { method: 'POST', body: JSON.stringify({
+          planId: p.id, title: p.title, status: 'done',
+          items: p.items.filter((i) => i.status !== 'done').map((i) => ({
+            serviceId: i.serviceId, tooth: i.tooth, quantity: i.quantity,
+            price: Number(i.price), stage: i.stage })),
+        }) });
+        dropCache('patients');
+        toast('План закрыт');
+        return docPlan(p.id);
+      }
+      case 'delplan': {
+        el.disabled = true;
+        await api(`/doctor/plans/${S.d.tplanView.id}`, { method: 'DELETE' });
+        dropCache('patients');
+        toast('План удалён');
+        return back();
+      }
+      case 'pay': return go(docPayment, S.d.patient.id);
+      case 'dopay': {
+        const amount = Number(val('payamount').replace(/\s/g, ''));
+        if (!(amount > 0)) return toast('Укажите сумму', true);
+        el.disabled = true; el.textContent = 'Проводим…';
+        const r = await api(`/doctor/patients/${d.id}/payments`, { method: 'POST',
+          body: JSON.stringify({ amount, method: S.d.payMethod ?? 'cash', note: val('paynote') || null }) });
+        tg?.HapticFeedback?.notificationOccurred?.('success');
+        toast(`Принято. Долг: ${money(r.balance.debt)} сум`);
+        dropCache('patients');
+        S.stack.pop();
+        return docPatient(d.id);
       }
       case 'doresched': {
         el.disabled = true;
@@ -2390,7 +2810,12 @@ document.addEventListener('click', async (e) => {
     await go(TABS[0].fn);
     // Пришли по кнопке «Перенести» под напоминанием: человек уже решил, что
     // переносит, и список записей на пути к сетке времени — лишний экран.
-    const resched = new URLSearchParams(location.search).get('resched');
+    const q = new URLSearchParams(location.search);
+    if (q.get('plan') === '1') {
+      const my = TABS.findIndex((t) => t.k === 'my');
+      if (my >= 0) return goTab(my);
+    }
+    const resched = q.get('resched');
     if (/^[0-9a-f-]{36}$/i.test(resched ?? '')) {
       // Ошибка здесь не должна уносить всё приложение: запись могли отменить
       // или она уже прошла — тогда человек остаётся на своём разделе.

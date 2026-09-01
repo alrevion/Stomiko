@@ -143,6 +143,23 @@ app.post('/api/me/appointments/:id/cancel', async (c) => {
 });
 
 /**
+ * План лечения глазами пациента.
+ *
+ * Сквозной, как список записей: человек лечится в нескольких кабинетах и
+ * должен видеть все свои планы, не переключаясь между ними.
+ *
+ * Себестоимости здесь нет и быть не может — функция БД отдаёт пациенту
+ * другой набор полей, а не тот же с погашенными колонками.
+ */
+app.get('/api/me/plans', async (c) => {
+  const { data, error } = await c.get('sb').rpc('my_treatment_plans', {
+    p_subject: c.get('identity').subject,
+  });
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json({ plans: data ?? [] });
+});
+
+/**
  * Куда можно перенести — и сам перенос.
  *
  * Оба маршрута сквозные, как отмена: человек лечится в нескольких кабинетах,
@@ -388,11 +405,35 @@ app.get('/api/doctor/day', async (c) => {
 });
 
 app.get('/api/doctor/services', async (c) => {
-  const { data, error } = await c.get('scope')
+  const scope = c.get('scope');
+  const { data, error } = await scope
     .select('services', 'id, code, name_ru, name_uz, price, unit_of_norm')
     .order('name_ru');
   if (error) return c.json({ error: error.message }, 500);
-  return c.json({ services: data });
+
+  // Себестоимость нужна только редактору плана, и только там её и просим:
+  // на каждую услугу это разворот техкарты, а список услуг открывается
+  // ещё и при наборе приёма, где цифра не нужна.
+  if (c.req.query('withCost') !== '1') return c.json({ services: data });
+
+  // Расход делится на постоянную часть (кресло, анестезия — один раз на
+  // приём) и переменную (на каждый канал, зуб, поверхность). Отдаём обе,
+  // и редактор считает любую кратность сам, без запроса на каждое нажатие.
+  const costs = await scope.rpc<{ service_id: string; base: string; per_unit: string; unpriced: number }[]>(
+    'service_cost_parts', { p_tenant_id: scope.tenantId });
+  const by = new Map((costs ?? []).map((x) => [String(x.service_id), x]));
+
+  return c.json({
+    services: ((data ?? []) as Record<string, unknown>[]).map((s) => {
+      const c2 = by.get(String(s.id));
+      return {
+        ...s,
+        costBase: Number(c2?.base ?? 0),
+        costPerUnit: Number(c2?.per_unit ?? 0),
+        unpricedLines: Number(c2?.unpriced ?? 0),
+      };
+    }),
+  });
 });
 
 /** Walk-in: самотёк — норма для кабинета, приём создаётся без записи. */

@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { closeVisit } from '../close.js';
 import type { Env, Identity, TenantScope } from '../db.js';
 import { acknowledgeShortfall } from '../stock.js';
-import { notifyCancelled, notifyReminder, type CancelNotice } from '../notify.js';
+import { notifyCancelled, notifyPlanReady, notifyReminder, type CancelNotice } from '../notify.js';
 
 type Vars = { scope: TenantScope; identity: Identity };
 export const doctor = new Hono<{ Bindings: Env; Variables: Vars }>();
@@ -446,6 +446,135 @@ doctor.put('/patients/:id', async (c) => {
     p_detail: Object.keys(patch).join(', '),
   }).catch(() => {});
   return c.json({ ok: true });
+});
+
+// ── План лечения и деньги ───────────────────────────────────────────────────
+
+/**
+ * Планы пациента, долг и история платежей — одним запросом.
+ *
+ * Три вещи вместе, потому что смотрят на них вместе: план без долга не
+ * говорит, дошло ли дело до денег, а долг без плана — за что он.
+ */
+doctor.get('/patients/:id/plans', async (c) => {
+  const scope = c.get('scope');
+  const pid = c.req.param('id');
+  const [plans, balance, payments] = await Promise.all([
+    scope.rpc<Record<string, unknown>[]>('patient_plans', { p_tenant_id: scope.tenantId, p_patient_id: pid }),
+    scope.rpc<Record<string, unknown>>('patient_balance', { p_tenant_id: scope.tenantId, p_patient_id: pid }),
+    scope.rpc<Record<string, unknown>[]>('patient_payments', { p_tenant_id: scope.tenantId, p_patient_id: pid }),
+  ]);
+  return c.json({
+    plans: (plans ?? []).map((p) => ({
+      id: p.id, title: p.title, status: p.status, createdAt: p.created_at,
+      items: p.items, done: p.done,
+      revenue: Number(p.revenue), cost: Number(p.cost),
+      margin: Number(p.revenue) - Number(p.cost),
+    })),
+    balance: {
+      billed: Number(balance?.billed ?? 0),
+      paid: Number(balance?.paid ?? 0),
+      debt: Number(balance?.debt ?? 0),
+    },
+    payments: (payments ?? []).map((x) => ({
+      id: x.id, amount: Number(x.amount), method: x.method, note: x.note, at: x.created_at,
+    })),
+  });
+});
+
+/** Один план целиком: позиции, себестоимость по техкартам, маржа. */
+doctor.get('/plans/:id', async (c) => {
+  const scope = c.get('scope');
+  const plan = await scope.rpc<Record<string, unknown> | null>('treatment_plan', {
+    p_tenant_id: scope.tenantId, p_plan_id: c.req.param('id'),
+  });
+  if (!plan) return c.json({ error: 'план не найден' }, 404);
+  return c.json(plan);
+});
+
+/**
+ * Сохранение плана целиком, а не по одной позиции.
+ *
+ * План — это документ: врач собирает его за один заход, глядя на итог. Правка
+ * по строке заставляла бы сохранять после каждого касания и показывала бы
+ * маржу, посчитанную на полпути.
+ */
+doctor.post('/plans', async (c) => {
+  const scope = c.get('scope');
+  const b = await c.req.json<{
+    planId?: string; patientId?: string; title?: string; status?: string; note?: string;
+    items?: { serviceId: string; tooth?: string; quantity?: number; price?: number; stage?: number }[];
+  }>().catch(() => ({} as Record<string, never>));
+
+  if (!b.planId && !b.patientId) return c.json({ error: 'не указан пациент' }, 400);
+  try {
+    const res = await scope.rpc<Record<string, unknown>>('save_treatment_plan', {
+      p_tenant_id: scope.tenantId,
+      p_plan_id: b.planId ?? null,
+      p_patient_id: b.patientId ?? null,
+      p_title: b.title ?? '',
+      p_status: b.status ?? null,
+      p_note: b.note ?? null,
+      p_items: b.items ?? [],
+      p_by: c.get('identity').subject,
+    });
+
+    // План стал виден пациенту впервые — говорим об этом один раз.
+    // Сумму берём из свежесохранённого плана, а не из тела запроса: в теле
+    // цены может не быть вовсе, они подставляются из прайса.
+    if (res?.activated) {
+      const plan = await scope.rpc<Record<string, any> | null>('treatment_plan', {
+        p_tenant_id: scope.tenantId, p_plan_id: res.planId,
+      });
+      await notifyPlanReady(
+        c.env.TELEGRAM_BOT_TOKEN,
+        (res.telegramSubject as string | null) ?? null,
+        String(res.cabinet ?? ''), String(res.title ?? ''),
+        Number(plan?.totals?.revenue ?? 0),
+        c.env.MINIAPP_URL ?? 'https://stomiko-api.alrevion.workers.dev',
+      );
+    }
+    return c.json(res);
+  } catch (err) {
+    const msg = (err as Error).message;
+    // Нарушение ограничения на номер зуба доходит сюда текстом Postgres.
+    // Показывать его врачу — то же самое, что показать стектрейс.
+    if (msg.includes('tooth_check')) {
+      return c.json({ error: 'Номер зуба указан не по FDI. Квадрант 1–8, зуб 1–8: например 26.' }, 400);
+    }
+    return c.json({ error: msg }, 400);
+  }
+});
+
+doctor.delete('/plans/:id', async (c) => {
+  try {
+    await c.get('scope').rpc('delete_treatment_plan', {
+      p_tenant_id: c.get('scope').tenantId, p_plan_id: c.req.param('id'),
+    });
+    return c.json({ ok: true });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+});
+
+/** Платёж пациента. Долг = оказано минус внесено, счетов здесь нет. */
+doctor.post('/patients/:id/payments', async (c) => {
+  const scope = c.get('scope');
+  const b = await c.req.json<{ amount?: number; method?: string; note?: string }>()
+    .catch(() => ({} as { amount?: number; method?: string; note?: string }));
+  try {
+    const res = await scope.rpc<Record<string, unknown>>('record_payment', {
+      p_tenant_id: scope.tenantId,
+      p_patient_id: c.req.param('id'),
+      p_amount: b.amount ?? 0,
+      p_method: b.method ?? 'cash',
+      p_note: b.note ?? null,
+      p_by: c.get('identity').subject,
+    });
+    return c.json(res);
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
 });
 
 // ── Техкарта ────────────────────────────────────────────────────────────────

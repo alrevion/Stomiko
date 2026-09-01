@@ -110,6 +110,31 @@ function escapeHtml(s: string): string {
 }
 
 
+/**
+ * План лечения готов — пациенту стоит его увидеть.
+ *
+ * План, который врач составил и никому не показал, не работает ни как
+ * обещание, ни как инструмент продаж. Сообщение уходит один раз, когда план
+ * впервые становится видимым, а не при каждом сохранении.
+ */
+export async function notifyPlanReady(
+  botToken: string, subject: string | null, cabinet: string, title: string,
+  total: number, appUrl: string,
+): Promise<SendResult> {
+  const chatId = chatIdFromSubject(subject);
+  if (!chatId) return 'no_chat';
+  const text = [
+    '<b>Врач составил план лечения</b>', '',
+    escapeHtml(title),
+    `Всего: ${new Intl.NumberFormat('ru-RU').format(Math.round(total))} сум`, '',
+    escapeHtml(cabinet), '',
+    'Откройте, чтобы посмотреть этапы и сроки.',
+  ].join('\n');
+  return send(botToken, chatId, text, {
+    inline_keyboard: [[{ text: 'Посмотреть план', web_app: { url: `${appUrl}?plan=1` } }]],
+  });
+}
+
 /* ── Уведомления врачу ────────────────────────────────────────────────── */
 
 export interface StaffNotice {

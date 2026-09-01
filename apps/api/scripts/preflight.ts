@@ -357,11 +357,33 @@ async function main() {
   ok(!hook.result?.last_error_message, 'вебхук без ошибок', hook.result?.last_error_message ?? 'чисто');
 
   section('── Уборка ──');
-  const apptId = booked.body.appointmentId;
-  await sb.from('appointment_resources').delete().eq('appointment_id', apptId);
-  await sb.from('appointments').delete().eq('id', apptId);
-  await sb.from('patients').delete().eq('phone', '+998900000777');
-  await sb.from('patients').delete().in('full_name', ['Проверка Готовности', 'Проверка Сквозная']);
+  // Убираем ПО ПАЦИЕНТУ, а не по записи этого прогона.
+  //
+  // Раньше удалялась одна запись, а карточка — по номеру. Любая запись,
+  // оставшаяся от прошлого раза, держала карточку внешним ключом, удаление
+  // молча не проходило, и следующий прогон получал чужую карточку с чужим
+  // telegram_subject — то есть проверка «карточка привязана к аккаунту»
+  // ломалась не из-за продукта, а из-за мусора после себя.
+  const { data: leftovers } = await sb.from('patients').select('id')
+    .or(`phone.eq.+998900000777,full_name.in.("Проверка Готовности","Проверка Сквозная")`);
+  const junkIds = (leftovers ?? []).map((x) => String(x.id));
+  if (junkIds.length) {
+    const { data: apps } = await sb.from('appointments').select('id').in('patient_id', junkIds);
+    const appIds = (apps ?? []).map((x) => String(x.id));
+    if (appIds.length) {
+      await sb.from('appointment_resources').delete().in('appointment_id', appIds);
+      await sb.from('appointments').delete().in('id', appIds);
+    }
+    await sb.from('treatment_plan_items').delete().in('plan_id',
+      ((await sb.from('treatment_plans').select('id').in('patient_id', junkIds)).data ?? [])
+        .map((x) => String(x.id)));
+    await sb.from('treatment_plans').delete().in('patient_id', junkIds);
+    await sb.from('payments').delete().in('patient_id', junkIds);
+    // Результат удаления ПРОВЕРЯЕТСЯ: молчаливый отказ по внешнему ключу и
+    // был причиной того, что мусор копился незамеченным.
+    const { error: delErr } = await sb.from('patients').delete().in('id', junkIds);
+    ok(!delErr, 'проверочные карточки удалены', delErr?.message ?? `${junkIds.length} шт.`);
+  }
   await sb.from('memberships').delete().eq('subject', `tg:${DOC_UID}`);
   await sb.from('app_users').delete().like('subject', 'tg:9%');
   await sb.from('staff_invites').delete().eq('token', inviteToken);
