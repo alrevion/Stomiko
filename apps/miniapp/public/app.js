@@ -549,6 +549,11 @@ function dayListHtml(date) {
     const blocked = a.patient === '— занято —';
     const past = new Date(a.endsAt).getTime() < Date.now();
     const unresolved = past && a.status === 'scheduled' && !a.visitId && !blocked;
+    // Молчание засчитываем только тем, кого спрашивали. Напоминание уходит
+    // за сутки, поэтому раньше чем за 23 часа отметки быть не может, а тому,
+    // у кого нет бота, её негде и нажать.
+    const silent = !past && !blocked && a.status === 'scheduled' && a.reachable && !a.confirmed
+      && new Date(a.startsAt).getTime() - Date.now() < 23 * 3600e3;
     return `<div class="slot ${blocked ? 'blocked' : ''} ${a.visitStatus === 'closed' ? 'done' : ''} ${
       a.status === 'no_show' ? 'noshow' : ''} ${a.source === 'patient_link' ? 'mine' : ''}" data-appt="${a.id}">
       <div class="time mono">${hhmm(a.startsAt)}<small>${hhmm(a.endsAt)}</small></div>
@@ -557,7 +562,8 @@ function dayListHtml(date) {
         <div class="muted">${esc(a.service ?? (blocked ? 'время недоступно' : 'услуга не выбрана'))}${
           a.source === 'patient_link' ? ' · записался сам' : ''}${
           a.status === 'no_show' ? ' · не пришёл' : ''}${
-          unresolved ? ' · <b>не отмечен</b>' : ''}</div>
+          unresolved ? ' · <b>не отмечен</b>' : ''}${
+          a.confirmed ? ' · придёт' : silent ? ' · <b>не подтвердил</b>' : ''}</div>
       </div>
       <div class="mark ${unresolved ? 'todo' : ''}">${
         a.visitStatus === 'closed' ? '✓' : a.visitId ? '·' : unresolved ? '!' : ''}</div>
@@ -1727,6 +1733,94 @@ function patCancel(apptId) {
 }
 
 /**
+ * Перенос записи.
+ *
+ * Сетка та же, что при первичной записи, но с одним отличием: собственная
+ * бронь из расчёта исключена. Иначе человек с приёмом в 10:00 не увидел бы
+ * ни 10:15, ни 10:30 — их закрывал бы он сам, и самый частый перенос,
+ * «сдвинуть немного», оказался бы невозможен.
+ *
+ * Отдельная операция, а не «отменить и записаться заново»: между двумя
+ * действиями слот успевает уйти, и человек, который сдвигал время на час,
+ * остаётся без приёма вовсе.
+ */
+async function patReschedule(apptId) {
+  spinner('Ищем свободное время…');
+  const { current, days } = await api(`/me/appointments/${apptId}/slots?days=21`);
+  const wasLine = `${dateLabel(current.startsAt.slice(0, 10), { day: 'numeric', month: 'long' })}, ${hhmm(current.startsAt)}`;
+
+  if (!days.length) {
+    return render(`
+      <header><h1>Перенести приём</h1><span class="sub">${esc(current.service)}</span></header>
+      <main><div class="card warn">
+        <div class="name">Свободного времени нет</div>
+        <div class="note" style="margin-top:6px">На ближайшие три недели окон не осталось.
+        Позвоните в кабинет — врач подберёт время вручную.</div>
+      </div></main>`);
+  }
+
+  S.d.resched = { apptId, current, days };
+  S.d.pickedDate = days[0].date;
+
+  const stripHtml = (sel) => days.map((d) => `
+    <button class="daychip ${d.date === sel ? 'on' : ''}" data-date="${d.date}"
+      aria-pressed="${d.date === sel}" aria-label="${esc(d.label)}">
+      <span class="dw">${d.weekday}</span><span class="dn">${dayNum(d.date)}</span>
+      <span class="dd">${d.times.length}</span>
+    </button>`).join('');
+
+  const timesHtml = (day) => `
+    <div class="sectiontitle">${esc(day.label)} — свободно ${day.times.length}</div>
+    <div class="times">${day.times.map((t) => `
+      <button data-rtime="${t}" ${t === current.startsAt ? 'disabled' : ''}>${hhmm(t)}</button>`).join('')}</div>`;
+
+  render(`
+    <header><h1>Перенести приём</h1>
+      <span class="sub">${esc(current.service)} · сейчас ${esc(wasLine)}</span></header>
+    <div class="weekstrip scroll" id="rstrip">${stripHtml(S.d.pickedDate)}</div>
+    <main id="rtimes">${timesHtml(days[0])}</main>
+  `);
+
+  // Смена дня трогает только сетку времени: заголовок и лента дней остаются
+  // на месте, иначе экран рывком перестраивается под пальцем.
+  S.d.redraw = () => {
+    const day = days.find((d) => d.date === S.d.pickedDate) ?? days[0];
+    const strip = document.getElementById('rstrip');
+    const times = document.getElementById('rtimes');
+    if (!strip || !times) return;
+    strip.querySelectorAll('[data-date]').forEach((b) => {
+      const on = b.dataset.date === day.date;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
+    times.className = '';
+    void times.offsetWidth;
+    times.className = 'fade-up';
+    times.innerHTML = timesHtml(day);
+  };
+}
+
+/** Отдельный шаг подтверждения: перенос одним касанием — потерянное время. */
+function patReschedConfirm(startsAt) {
+  const r = S.d.resched;
+  if (!r) return patMy();
+  render(`
+    <header><h1>Перенести?</h1><span class="sub">${esc(r.current.cabinet)}</span></header>
+    <main>
+      <div class="card">
+        <div class="row"><span class="muted">Услуга</span><span class="name">${esc(r.current.service)}</span></div>
+        <div class="row"><span class="muted">Было</span><span class="mono">${
+          dateLabel(r.current.startsAt.slice(0, 10), { day: 'numeric', month: 'long', weekday: 'short' })}, ${hhmm(r.current.startsAt)}</span></div>
+        <div class="row"><span class="muted">Станет</span><span class="mono name">${
+          dateLabel(startsAt.slice(0, 10), { day: 'numeric', month: 'long', weekday: 'short' })}, ${hhmm(startsAt)}</span></div>
+        <div class="note">Врач получит сообщение, а прежнее время освободится для другого пациента.</div>
+      </div>
+    </main>
+    <button class="primary" data-act="doresched" data-id="${r.apptId}" data-at="${startsAt}">Перенести</button>
+  `);
+}
+
+/**
  * Подтверждение номера.
  *
  * Номер присылает сам Telegram служебным сообщением боту — подделать его
@@ -1792,7 +1886,10 @@ async function patMy() {
             a.status === 'cancelled' ? 'отменена' : a.past ? 'прошла' : 'предстоит'}</span></div>
         <div class="row"><span class="mono">${dateLabel(a.startsAt.slice(0, 10))}, ${hhmm(a.startsAt)}</span>
           <span class="mono muted">${money(a.price)} сум</span></div>
-        ${!a.past && a.status !== 'cancelled' ? `<button class="mini" data-cancel="${a.id}">Отменить</button>` : ''}
+        ${!a.past && a.status !== 'cancelled' ? `${a.confirmed
+          ? '<div class="note" style="margin-top:6px">Вы подтвердили, что придёте.</div>' : ''}
+          <button class="mini" data-resched="${a.id}">Перенести</button>
+          <button class="mini" data-cancel="${a.id}">Отменить</button>` : ''}
       </div>`).join('') : '<div class="empty">Записей пока нет.</div>'}
     </main>
     ${S.d.me?.canBeDoctor ? `<div class="picker" style="margin-top:16px">
@@ -1808,7 +1905,7 @@ async function patMy() {
    ══════════════════════════════════════════════════════════════════════════ */
 
 document.addEventListener('click', async (e) => {
-  const el = e.target.closest('[data-day],[data-week],[data-appt],[data-act],[data-service],[data-q],[data-tc],[data-svc],[data-date],[data-time],[data-cancel],[data-wd],[data-add],[data-rm],[data-rmov],[data-rmline],[data-material],[data-batch],[data-unit],[data-pick],[data-wsvc],[data-reason],[data-patient],[data-visit],[data-free],[data-tab],[data-mode],[data-tpl],[data-plan]');
+  const el = e.target.closest('[data-day],[data-week],[data-appt],[data-act],[data-service],[data-q],[data-tc],[data-svc],[data-date],[data-time],[data-cancel],[data-resched],[data-rtime],[data-wd],[data-add],[data-rm],[data-rmov],[data-rmline],[data-material],[data-batch],[data-unit],[data-pick],[data-wsvc],[data-reason],[data-patient],[data-visit],[data-free],[data-tab],[data-mode],[data-tpl],[data-plan]');
   if (!el) return;
   const d = el.dataset;
   haptic();
@@ -1882,6 +1979,8 @@ document.addEventListener('click', async (e) => {
     // Отмена одним касанием — потерянный приём от случайного тапа.
     // Пациент подтверждает на отдельном экране, где видит, что именно отменяет.
     if (d.cancel) return go(patCancel, d.cancel);
+    if (d.resched) return go(patReschedule, d.resched);
+    if (d.rtime) return go(patReschedConfirm, d.rtime);
 
     // Расписание: набранное в полях втягивается ДО любой правки состояния,
     // иначе перерисовка возвращает старое время и правка теряется молча.
@@ -1942,6 +2041,21 @@ document.addEventListener('click', async (e) => {
         if (typeof tg?.requestContact === 'function') tg.requestContact(() => {});
         else tg?.openTelegramLink?.(`https://t.me/${S.d.me?.bot ?? 'stomiko_bot'}?start=phone`);
         return awaitPhone(d.at);
+      }
+      case 'doresched': {
+        el.disabled = true;
+        el.textContent = 'Переносим…';
+        await api(`/me/appointments/${d.id}/reschedule`, {
+          method: 'POST', body: JSON.stringify({ startsAt: d.at }),
+        });
+        tg?.HapticFeedback?.notificationOccurred?.('success');
+        toast('Запись перенесена. Врач уведомлён.');
+        // Возврат к списку записей, а не на шаг назад: позади остались сетка
+        // времени и подтверждение, и оба уже неактуальны.
+        S.stack = [];
+        const my = TABS.findIndex((t) => t.k === 'my');
+        if (my >= 0) S.tab = my;
+        return go(TABS[my >= 0 ? my : 0].fn);
       }
       case 'docancelmy': {
         el.disabled = true;
@@ -2274,6 +2388,15 @@ document.addEventListener('click', async (e) => {
     if (me.mode === 'patient' && !me.tenantId) { TABS = []; syncChrome(); return needLink(); }
     setTabs(me.mode);
     await go(TABS[0].fn);
+    // Пришли по кнопке «Перенести» под напоминанием: человек уже решил, что
+    // переносит, и список записей на пути к сетке времени — лишний экран.
+    const resched = new URLSearchParams(location.search).get('resched');
+    if (/^[0-9a-f-]{36}$/i.test(resched ?? '')) {
+      // Ошибка здесь не должна уносить всё приложение: запись могли отменить
+      // или она уже прошла — тогда человек остаётся на своём разделе.
+      go(patReschedule, resched).catch((e) => toast(e.message, true));
+      return;
+    }
     // Первый экран нарисован — можно тихо прогреть остальные разделы.
     // Три запроса в фоне дешевле, чем заставка на каждое первое нажатие.
     if (me.role === 'doctor') {

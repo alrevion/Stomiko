@@ -7,11 +7,14 @@ import { patient } from './routes/patient.js';
 import { warehouse } from './routes/warehouse.js';
 import { onboarding } from './routes/onboarding.js';
 import { creditTelegramPayment, sendInvoice, subscriptionState, type Plan } from './billing.js';
-import { notifyReminder, notifyStaffCancelled } from './notify.js';
+import { confirmedText, notifyReminder, notifyStaffCancelled, notifyStaffRescheduled } from './notify.js';
 
 type Vars = { scope: TenantScope; identity: Identity; sb: ReturnType<typeof createServiceClient> };
 
 const app = new Hono<{ Bindings: Env; Variables: Vars }>();
+
+/** Адрес мини-аппа. Нужен и вебхуку для кнопок, и напоминаниям для «Перенести». */
+const miniapp = (env: Env) => env.MINIAPP_URL ?? 'https://stomiko-api.alrevion.workers.dev';
 
 app.use('/api/*', async (c, next) => {
   const initData = c.req.header('X-Telegram-Init-Data');
@@ -92,6 +95,7 @@ app.get('/api/me/appointments', async (c) => {
       service: a.service ?? '—',
       price: a.price,
       past: a.is_past,
+      confirmed: Boolean(a.confirmed),
     })),
   });
 });
@@ -135,6 +139,105 @@ app.post('/api/me/appointments/:id/cancel', async (c) => {
     return c.json({ ok: true });
   } catch (err) {
     return c.json({ error: (err as Error).message }, 400);
+  }
+});
+
+/**
+ * Куда можно перенести — и сам перенос.
+ *
+ * Оба маршрута сквозные, как отмена: человек лечится в нескольких кабинетах,
+ * а ссылка «Перенести» приходит из напоминания любого из них. Заставлять его
+ * сперва переключить кабинет — значит показать ошибку вместо сетки времени.
+ *
+ * Право проверяется принадлежностью: в выдаче my_appointments только СВОИ
+ * записи, и кабинет для вызова берётся оттуда же, а не из запроса.
+ */
+async function ownAppointment(
+  sb: ReturnType<typeof createServiceClient>, subject: string, apptId: string,
+) {
+  const { data } = await sb.rpc('my_appointments', { p_subject: subject });
+  const a = ((data ?? []) as Record<string, unknown>[]).find((x) => String(x.id) === apptId);
+  if (!a) return { error: 'запись не найдена', status: 404 as const };
+  if (a.is_past) return { error: 'приём уже прошёл', status: 400 as const };
+  if (a.status === 'cancelled') return { error: 'запись отменена', status: 400 as const };
+  return { appt: a };
+}
+
+app.get('/api/me/appointments/:id/slots', async (c) => {
+  const sb = c.get('sb');
+  const own = await ownAppointment(sb, c.get('identity').subject, c.req.param('id'));
+  if (own.error) return c.json({ error: own.error }, own.status);
+
+  const from = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tashkent' });
+  const days = Math.min(Number(c.req.query('days') ?? 21), 60);
+  const to = new Date(Date.now() + days * 864e5).toLocaleDateString('en-CA', { timeZone: 'Asia/Tashkent' });
+
+  const { data, error } = await sb.rpc('appointment_slots', {
+    p_tenant_id: own.appt!.tenant_id, p_appointment_id: c.req.param('id'), p_from: from, p_to: to,
+  });
+  if (error) return c.json({ error: error.message }, 400);
+
+  // Группировка по дням: выбирают сначала день, потом время. Плоский список
+  // из двухсот слотов с телефона не читается.
+  const byDate = new Map<string, string[]>();
+  for (const s of (data ?? []) as { slot_start: string; slot_date: string }[]) {
+    byDate.set(s.slot_date, [...(byDate.get(s.slot_date) ?? []), s.slot_start]);
+  }
+  const fmt = (d: string, o: Intl.DateTimeFormatOptions) =>
+    new Date(`${d}T12:00:00+05:00`).toLocaleDateString('ru-RU', { ...o, timeZone: 'Asia/Tashkent' });
+
+  return c.json({
+    current: { startsAt: own.appt!.starts_at, service: own.appt!.service ?? '—', cabinet: own.appt!.cabinet },
+    days: [...byDate.entries()].map(([date, times]) => ({
+      date,
+      weekday: fmt(date, { weekday: 'short' }),
+      label: fmt(date, { day: 'numeric', month: 'long' }),
+      times,
+    })),
+  });
+});
+
+app.post('/api/me/appointments/:id/reschedule', async (c) => {
+  const sb = c.get('sb');
+  const own = await ownAppointment(sb, c.get('identity').subject, c.req.param('id'));
+  if (own.error) return c.json({ error: own.error }, own.status);
+
+  const b = await c.req.json<{ startsAt?: string }>().catch(() => ({} as { startsAt?: string }));
+  if (!b.startsAt) return c.json({ error: 'не выбрано время' }, 400);
+
+  try {
+    const { data, error } = await sb.rpc('reschedule_appointment', {
+      p_tenant_id: own.appt!.tenant_id,
+      p_appointment_id: c.req.param('id'),
+      p_starts_at: b.startsAt,
+    });
+    if (error) throw new Error(error.message);
+    const n = data as Record<string, unknown>;
+
+    // Врач узнаёт сразу: прежнее окно освободилось, и его ещё можно отдать.
+    const { data: staff } = await sb.rpc('tenant_staff', { p_tenant_id: own.appt!.tenant_id });
+    await notifyStaffRescheduled(c.env.TELEGRAM_BOT_TOKEN,
+      ((staff ?? []) as { subject: string }[]).map((x) => x.subject), {
+        patientName: String(n.patientName ?? ''),
+        patientPhone: (n.patientPhone as string | null) ?? null,
+        serviceName: (n.serviceName as string | null) ?? null,
+        wasAt: String(n.wasAt ?? ''),
+        startsAt: String(n.startsAt ?? ''),
+      });
+    return c.json({ ok: true, startsAt: n.startsAt });
+  } catch (err) {
+    const msg = (err as Error).message;
+    // Слот мог уйти между показом и нажатием — это обычная гонка, и правду
+    // надо сказать прямо, а не «ошибка сервера». Два случая различаются:
+    // «заняли» — это факт о другом пациенте, и утверждать его, когда время
+    // просто выпало из сетки (кончился рабочий день, прошёл срок), нельзя.
+    if (msg.includes('занят')) {
+      return c.json({ error: 'Это время только что заняли. Выберите другое.' }, 409);
+    }
+    if (msg.includes('недоступно')) {
+      return c.json({ error: 'Это время больше не предлагается. Выберите другое.' }, 409);
+    }
+    return c.json({ error: msg }, 400);
   }
 });
 
@@ -466,6 +569,12 @@ app.post('/tg/webhook', async (c) => {
       };
     };
     pre_checkout_query?: { id?: string };
+    callback_query?: {
+      id: string;
+      from?: { id: number };
+      data?: string;
+      message?: { chat?: { id: number }; message_id?: number };
+    };
   };
   const update: Update = await c.req.json().catch(() => ({}));
 
@@ -478,6 +587,67 @@ app.post('/tg/webhook', async (c) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pre_checkout_query_id: update.pre_checkout_query.id, ok: true }),
     }).catch(() => {});
+    return c.json({ ok: true });
+  }
+
+  // ── Нажатие кнопки под напоминанием ───────────────────────────────────
+  //
+  // Сообщение с кнопкой пересылается в два касания, поэтому право проверяет
+  // не бот, а база: подтвердить можно только запись, привязанную к тому же
+  // аккаунту Telegram, который нажал. Ответ приходит НЕ сообщением в чат, а
+  // всплывающей подсказкой — иначе на каждое нажатие копился бы новый текст.
+  if (update.callback_query) {
+    const q = update.callback_query;
+    const answer = (text: string) =>
+      fetch(`https://api.telegram.org/bot${c.env.TELEGRAM_BOT_TOKEN}/answerCallbackQuery`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ callback_query_id: q.id, text }),
+      }).catch(() => {});
+
+    const apptId = (q.data ?? '').startsWith('cfm:') ? q.data!.slice(4) : null;
+    if (!apptId || !q.from?.id) {
+      await answer('Кнопка устарела.');
+      return c.json({ ok: true });
+    }
+
+    try {
+      const sb = createServiceClient(c.env);
+      const { data, error } = await sb.rpc('confirm_appointment', {
+        p_subject: `tg:${q.from.id}`, p_appointment_id: apptId,
+      });
+      if (error) throw new Error(error.message);
+      const r = (data ?? {}) as {
+        ok?: boolean; already?: boolean; reason?: string;
+        serviceName?: string | null; cabinet?: string | null; startsAt?: string;
+      };
+
+      if (!r.ok) {
+        await answer({
+          not_yours: 'Эта запись не ваша.',
+          cancelled: 'Эта запись уже отменена.',
+          past: 'Этот приём уже прошёл.',
+        }[r.reason ?? ''] ?? 'Не получилось. Попробуйте ещё раз.');
+        return c.json({ ok: true });
+      }
+
+      await answer(r.already ? 'Уже подтверждено — ждём вас.' : 'Спасибо, ждём вас.');
+
+      // Кнопки убираем вместе с текстом: живая «Подтверждаю» над уже
+      // подтверждённым приёмом заставляет жать её снова.
+      if (q.message?.chat?.id && q.message.message_id) {
+        await fetch(`https://api.telegram.org/bot${c.env.TELEGRAM_BOT_TOKEN}/editMessageText`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: q.message.chat.id,
+            message_id: q.message.message_id,
+            parse_mode: 'HTML',
+            text: confirmedText(r.cabinet ?? '', r.serviceName ?? null, r.startsAt ?? ''),
+          }),
+        }).catch(() => {});
+      }
+    } catch {
+      await answer('Не получилось. Попробуйте ещё раз.');
+    }
     return c.json({ ok: true });
   }
 
@@ -508,7 +678,7 @@ app.post('/tg/webhook', async (c) => {
       body: JSON.stringify({ chat_id: chatId, text, ...(reply_markup ? { reply_markup } : {}) }),
     }).catch(() => {});
 
-  const appUrl = c.env.MINIAPP_URL ?? 'https://stomiko-api.alrevion.workers.dev';
+  const appUrl = miniapp(c.env);
 
   // ── Человек поделился номером ─────────────────────────────────────────
   //
@@ -591,6 +761,7 @@ async function runReminders(env: Env): Promise<{ sent: number; skipped: number }
   for (const r of (data ?? []) as Due[]) {
     const result = await notifyReminder(
       env.TELEGRAM_BOT_TOKEN, r.telegram_subject, r.cabinet, r.service_name, r.starts_at, r.kind,
+      r.appointment_id, miniapp(env),
     );
     // Помечаем и при неудаче: если чата нет, повторять бессмысленно —
     // иначе каждые пятнадцать минут будет новая попытка до самого приёма.

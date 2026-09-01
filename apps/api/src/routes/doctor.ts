@@ -32,7 +32,7 @@ doctor.get('/calendar', async (c) => {
 
   const [appointments, hours, overrides, settings, shortest] = await Promise.all([
     scope.select('appointments',
-      'id, starts_at, ends_at, status, source, note, patient_id, patients(full_name, phone), services(name_ru, duration_minutes, price)')
+      'id, starts_at, ends_at, status, source, note, confirmed_at, patient_id, patients(full_name, phone, telegram_subject), services(name_ru, duration_minutes, price)')
       .gte('starts_at', `${from}T00:00:00+05:00`)
       .lte('starts_at', `${to}T23:59:59+05:00`)
       .order('starts_at'),
@@ -69,6 +69,12 @@ doctor.get('/calendar', async (c) => {
         phone: (a.patients as { phone?: string } | null)?.phone ?? null,
         service: (a.services as { name_ru?: string } | null)?.name_ru ?? null,
         price: (a.services as { price?: number } | null)?.price ?? null,
+        // Подтвердил ли пациент, что придёт. Смысл не в галочке: врач
+        // обзванивает не всех, а тех, кто промолчал после напоминания.
+        confirmed: a.confirmed_at != null,
+        // Есть ли кому нажимать кнопку. Без этого «не подтвердил» висело бы
+        // над каждым, кто записался по телефону и бота в глаза не видел.
+        reachable: (a.patients as { telegram_subject?: string | null } | null)?.telegram_subject != null,
         visitId: v ? v.id : null,
         visitStatus: v ? v.status : null,
       };

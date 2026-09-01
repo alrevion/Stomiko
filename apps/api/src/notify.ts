@@ -154,22 +154,76 @@ export async function notifyStaffCancelled(
   return broadcast(botToken, subjects, text);
 }
 
-/** Напоминание пациенту. */
+/**
+ * Напоминание пациенту.
+ *
+ * У напоминания за сутки есть две кнопки. Без них рассылка односторонняя:
+ * врач всё равно не знает, придёт человек или нет, и обзванивает всех.
+ * С ними звонить нужно только тем, кто промолчал.
+ *
+ * За два часа кнопок нет намеренно: подтверждать поздно — врач уже ничего
+ * не успеет сделать с окном, а переносить некуда, запись ближе минимального
+ * запаса система всё равно не предложит.
+ */
 export async function notifyReminder(
   botToken: string, subject: string, cabinet: string,
   serviceName: string | null, startsAt: string, kind: 'day' | 'hour',
+  appointmentId?: string, appUrl?: string,
 ): Promise<SendResult> {
   const chatId = chatIdFromSubject(subject);
   if (!chatId) return 'no_chat';
+  const withButtons = kind === 'day' && !!appointmentId && !!appUrl;
   const head = kind === 'day' ? '<b>Напоминание: приём завтра</b>' : '<b>Приём через два часа</b>';
   const text = [
     head, '',
     serviceName ? escapeHtml(serviceName) : '',
     formatWhen(startsAt), '',
     escapeHtml(cabinet),
-    kind === 'day' ? '\nЕсли планы изменились — отмените запись в приложении, чтобы освободить время.' : '',
+    withButtons ? '\nПридёте? Ответьте кнопкой ниже — врачу важно знать заранее.'
+      : kind === 'day' ? '\nЕсли планы изменились — отмените запись в приложении, чтобы освободить время.' : '',
   ].filter(Boolean).join('\n');
-  return send(botToken, chatId, text);
+
+  return send(botToken, chatId, text, withButtons ? {
+    inline_keyboard: [[
+      { text: 'Подтверждаю', callback_data: `cfm:${appointmentId}` },
+      // Кнопка Mini App, а не команда боту: перенос — это выбор времени из
+      // сетки, а не разговор в чате.
+      { text: 'Перенести', web_app: { url: `${appUrl}?resched=${appointmentId}` } },
+    ]],
+  } : undefined);
+}
+
+/**
+ * Чем заменить напоминание после нажатия.
+ *
+ * Кнопки убираются вместе с текстом: сообщение с живой кнопкой «Подтверждаю»
+ * над уже подтверждённым приёмом заставляет жать её снова и снова.
+ */
+export function confirmedText(cabinet: string, serviceName: string | null, startsAt: string): string {
+  return [
+    '<b>Приём подтверждён</b>', '',
+    serviceName ? escapeHtml(serviceName) : '',
+    formatWhen(startsAt), '',
+    escapeHtml(cabinet), '',
+    'Ждём вас. Если планы изменятся — перенесите или отмените в приложении.',
+  ].filter(Boolean).join('\n');
+}
+
+/** Пациент перенёс сам — врач должен увидеть оба времени, а не одно новое. */
+export async function notifyStaffRescheduled(
+  botToken: string, subjects: string[], n: StaffNotice & { wasAt: string },
+): Promise<number> {
+  const text = [
+    '<b>Пациент перенёс запись</b>', '',
+    escapeHtml(n.patientName) + (n.patientPhone ? ` \u00b7 ${escapeHtml(n.patientPhone)}` : ''),
+    n.serviceName ? escapeHtml(n.serviceName) : '',
+    '',
+    `Было: ${formatWhen(n.wasAt)}`,
+    `Стало: ${formatWhen(n.startsAt)}`,
+    '',
+    'Прежнее окно освободилось.',
+  ].filter(Boolean).join('\n');
+  return broadcast(botToken, subjects, text);
 }
 
 async function broadcast(botToken: string, subjects: string[], text: string): Promise<number> {
