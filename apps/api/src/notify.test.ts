@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { confirmedText, notifyReminder } from './notify.js';
+import { confirmedText, notifyPlanReady, notifyReminder } from './notify.js';
 
 /**
  * Клавиатура под напоминанием.
@@ -78,6 +78,31 @@ describe('кому не пишем', () => {
     const calls = capture();
     const r = await notifyReminder('T', 'email:кто-то', 'Кабинет', null, '2026-09-10T05:00:00Z', 'day', APPT, APP);
     expect(r).toBe('no_chat');
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe('сообщение о готовом плане', () => {
+  it('ведёт в приложение и называет сумму', async () => {
+    const calls = capture();
+    await notifyPlanReady('T', SUBJ, 'Кабинет', 'Лечение 26 зуба', 1950000, APP);
+    // Разряды Intl разделяет неразрывным пробелом, и какой именно — зависит
+    // от версии ICU. Сверяем по цифрам, а не по конкретному пробелу.
+    expect(calls[0].body.text.replace(/\s/g, ' ')).toContain('1 950 000 сум');
+    expect(calls[0].body.reply_markup.inline_keyboard[0][0].web_app.url).toBe(`${APP}?plan=1`);
+  });
+
+  // Себестоимость не должна просочиться даже в текст уведомления: функция
+  // её не принимает вовсе, и это проверяется на сигнатуре, а не на глаз.
+  it('не получает и не показывает себестоимость', async () => {
+    const calls = capture();
+    await notifyPlanReady('T', SUBJ, 'Кабинет', 'План', 100, APP);
+    expect(calls[0].body.text).not.toMatch(/себестоим|материал/i);
+  });
+
+  it('без чата с ботом молчит', async () => {
+    const calls = capture();
+    expect(await notifyPlanReady('T', null, 'Кабинет', 'План', 100, APP)).toBe('no_chat');
     expect(calls).toHaveLength(0);
   });
 });
