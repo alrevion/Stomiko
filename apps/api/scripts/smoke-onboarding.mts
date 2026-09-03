@@ -58,8 +58,34 @@ const { count: closed } = await sb.from('visits').select('*', { count:'exact', h
 ok((closed ?? 0) > 5, 'демо-приёмы закрыты настоящим распределителем', `${closed} закрытых`);
 
 console.log('\n── Знакомство ──');
-for (const scr of ['calendar','visit','stock','techcards','margin','link'])
+// Раньше здесь просто постились шесть отметок. Проверялась бухгалтерия, а не
+// то, что врач вообще МОЖЕТ дойти до этих экранов, — и знакомство,
+// не открывавшее ни одного раздела, спокойно прошло эту проверку.
+// Теперь идём тем же путём, которым ведёт кнопка шага.
+const today = new Date().toISOString().slice(0, 10);
+const step: Record<string, () => Promise<number>> = {
+  calendar: async () => (await doc(`/doctor/calendar?from=${today}&to=${today}`)).status,
+  stock: async () => (await doc('/doctor/stock')).status,
+  margin: async () => (await doc('/doctor/reports/margin')).status,
+  link: async () => (await doc('/doctor/link')).status,
+  techcards: async () => (await doc('/doctor/services')).status,
+  // Самый длинный путь: приёмы лежат внутри карточки пациента, и шаг
+  // «Приём» обязан довести до конкретного закрытого приёма сам.
+  visit: async () => {
+    const { body: list } = await doc('/doctor/patients');
+    const who = (list.patients ?? []).find((x: any) => x.visits > 0);
+    if (!who) return 0;
+    const { body: card } = await doc(`/doctor/patients/${who.id}`);
+    const v = (card.visits ?? []).find((x: any) => x.status === 'closed') ?? (card.visits ?? [])[0];
+    if (!v) return 0;
+    return (await doc(`/doctor/visits/${v.id}`)).status;
+  },
+};
+for (const scr of ['calendar','visit','stock','techcards','margin','link']) {
+  const code = await step[scr]!();
+  ok(code === 200, `шаг «${scr}» открывается`, `${code}`);
   await doc('/onboarding/seen', { method:'POST', body: JSON.stringify({ screen: scr }) });
+}
 const seen = await doc('/me');
 ok((seen.body.onboarding?.seen ?? []).length === 6, 'пройденные экраны отмечены',
   `${(seen.body.onboarding?.seen ?? []).length} из 6`);

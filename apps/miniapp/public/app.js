@@ -361,6 +361,34 @@ const TOUR = [
   { k: 'link',      name: 'Ссылка для пациентов', why: 'по ней записываются сами' },
 ];
 
+/**
+ * Открыть раздел, о котором идёт шаг.
+ *
+ * Раньше знакомство только называло разделы, а искать их врач должен был сам:
+ * нажал «что дальше» — получил тот же список из шести пунктов, и всё. Список
+ * дел вместо показа. Теперь каждый шаг — кнопка, которая ведёт куда сказано.
+ */
+async function tourGo(key) {
+  const tab = (k) => TABS.findIndex((t) => t.k === k);
+  if (key === 'calendar') return goTab(tab('calendar'));
+  if (key === 'stock') return goTab(tab('stock'));
+  if (key === 'techcards') return go(docTechcards);
+  if (key === 'margin') return go(docMargin);
+  if (key === 'link') return go(docLink);
+  if (key === 'visit') {
+    // «Откройте любой прошлый приём» — открываем сами: на знакомстве врач не
+    // обязан догадываться, что приёмы лежат внутри карточки пациента.
+    spinner('Ищем приём…');
+    const { patients } = await api('/doctor/patients');
+    const who = (patients ?? []).find((x) => x.visits > 0);
+    if (!who) return toast('Закрытых приёмов пока нет — этот шаг будет позже', true);
+    const card = await api(`/doctor/patients/${who.id}`);
+    const v = (card.visits ?? []).find((x) => x.status === 'closed') ?? (card.visits ?? [])[0];
+    if (!v) return toast('У пациента нет приёмов', true);
+    return go(docVisit, v.id);
+  }
+}
+
 function tourCard() {
   const ob = S.d.me?.onboarding;
   if (!ob?.active) return '';
@@ -374,7 +402,10 @@ function tourCard() {
       ? `<div class="note" style="margin-top:6px"><b>${esc(next.name)}</b> — ${esc(next.why)}</div>`
       : `<div class="note" style="margin-top:6px">Вы посмотрели всё. Можно убирать
          выдуманные приёмы и заводить свои цены.</div>`}
-    <button class="mini" data-act="tour">${next ? 'Что дальше' : 'Завершить знакомство'}</button>
+    ${next
+      ? `<button class="mini" data-tourgo="${next.k}">Открыть «${esc(next.name)}»</button>
+         <button class="mini" data-act="tour">Все шаги</button>`
+      : `<button class="mini" data-act="tour">Завершить знакомство</button>`}
   </div>`;
 }
 
@@ -386,11 +417,11 @@ function tourScreen() {
     <header><h1>Знакомство</h1>
       <span class="sub">${TOUR.length - left.length} из ${TOUR.length} пройдено</span></header>
     <main>
-      <div class="card">
-        ${TOUR.map((t) => `<div class="row">
-          <span>${seen.has(t.k) ? '✓ ' : ''}<span class="${seen.has(t.k) ? 'muted' : 'name'}">${esc(t.name)}</span>
-            <br><span class="muted">${esc(t.why)}</span></span>
-        </div>`).join('')}
+      <div class="picker">
+        ${TOUR.map((t) => `<button data-tourgo="${t.k}">
+          <div class="name">${seen.has(t.k) ? '✓ ' : ''}${esc(t.name)}</div>
+          <div class="price">${esc(t.why)}</div>
+        </button>`).join('')}
       </div>
       ${left.length ? `<div class="card">
         <div class="note" style="margin:0">Пройдите разделы — приложение отметит
@@ -915,6 +946,7 @@ async function docPatients(query = '') {
     <header><h1>Пациенты</h1><span class="sub">${
       query ? `найдено ${patients.length}` : 'сначала те, кто записан'}</span></header>
     <main>
+      ${query ? '' : tourCard()}
       <div class="card">
         <input class="field" id="psearch" placeholder="Имя или телефон" value="${esc(query)}"
           inputmode="search" enterkeyhint="search" autocomplete="off">
@@ -1378,6 +1410,7 @@ async function docStock() {
   render(`
     <header><h1>Склад</h1><span class="sub">материалы заводятся здесь</span></header>
     <main>
+      ${tourCard()}
       <div class="statgrid">
         <div class="stat"><div class="v mono">${money(data.summary.value)}</div><div class="k">стоимость остатков</div></div>
         <div class="stat"><div class="v mono">${data.summary.total}</div><div class="k">материалов</div></div>
@@ -2234,7 +2267,7 @@ async function patMy() {
    ══════════════════════════════════════════════════════════════════════════ */
 
 document.addEventListener('click', async (e) => {
-  const el = e.target.closest('[data-day],[data-week],[data-appt],[data-act],[data-service],[data-q],[data-tc],[data-svc],[data-date],[data-time],[data-cancel],[data-resched],[data-rtime],[data-tplan],[data-psvc],[data-tq],[data-trm],[data-tstage],[data-pmethod],[data-mplan],[data-wd],[data-add],[data-rm],[data-rmov],[data-rmline],[data-material],[data-batch],[data-unit],[data-pick],[data-wsvc],[data-reason],[data-patient],[data-visit],[data-free],[data-tab],[data-mode],[data-tpl],[data-plan]');
+  const el = e.target.closest('[data-day],[data-week],[data-appt],[data-act],[data-service],[data-q],[data-tc],[data-svc],[data-date],[data-time],[data-tourgo],[data-cancel],[data-resched],[data-rtime],[data-tplan],[data-psvc],[data-tq],[data-trm],[data-tstage],[data-pmethod],[data-mplan],[data-wd],[data-add],[data-rm],[data-rmov],[data-rmline],[data-material],[data-batch],[data-unit],[data-pick],[data-wsvc],[data-reason],[data-patient],[data-visit],[data-free],[data-tab],[data-mode],[data-tpl],[data-plan]');
   if (!el) return;
   const d = el.dataset;
   haptic();
@@ -2310,6 +2343,7 @@ document.addEventListener('click', async (e) => {
     if (d.cancel) return go(patCancel, d.cancel);
     if (d.resched) return go(patReschedule, d.resched);
     if (d.rtime) return go(patReschedConfirm, d.rtime);
+    if (d.tourgo) return tourGo(d.tourgo);
     if (d.tplan) return go(docPlan, d.tplan);
     if (d.mplan) return go(patPlan, d.mplan);
     if (d.psvc) {
