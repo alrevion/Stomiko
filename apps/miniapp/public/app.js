@@ -392,14 +392,22 @@ function tourScreen() {
             <br><span class="muted">${esc(t.why)}</span></span>
         </div>`).join('')}
       </div>
-      <div class="card ${left.length ? '' : 'ok'}">
-        <div class="note" style="margin:0">${left.length
-          ? 'Пройдите разделы — приложение отметит их само, когда вы их откроете.'
-          : 'Дальше выдуманные приёмы и пациенты сотрутся. Справочник, техкарты и цены останутся — их вы сверите со своими.'}</div>
+      ${left.length ? `<div class="card">
+        <div class="note" style="margin:0">Пройдите разделы — приложение отметит
+        их само, когда вы их откроете.</div>
+      </div>` : ''}
+      <div class="card warn">
+        <div class="name">Что произойдёт по кнопке ниже</div>
+        <div class="note" style="margin-top:6px">Выдуманные пациенты, записи, приёмы
+        и партии на складе будут стёрты — все сразу и без возврата. Справочник,
+        техкарты и цены останутся: их вы дальше сверите со своими.${left.length
+          ? '<br><br>Вы ещё не смотрели: ' + left.map((t) => esc(t.name)).join(', ')
+            + '. После стирания показывать их будет не на чем — склад и календарь опустеют.'
+          : ''}</div>
       </div>
     </main>
-    <button class="primary ${left.length ? 'secondary' : 'danger'}" data-act="finishtour">
-      ${left.length ? 'Всё равно завершить' : 'Стереть выдуманное и начать работу'}</button>
+    <button class="primary danger" data-act="finishtour">
+      Стереть выдуманное и начать работу</button>
   `);
 }
 
