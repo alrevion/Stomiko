@@ -110,19 +110,35 @@ async function main() {
       const sig = createHmac('sha256', jwtSecret).update(`${head}.${body}`).digest('base64url');
       return `${head}.${body}.${sig}`;
     };
-    const probe = async (token: string) => {
+    // Отказ и «ноль строк» — разные вещи, и путать их здесь опаснее всего:
+    // неверный секрет подписи даёт отказ по КАЖДОМУ запросу, а выглядел бы
+    // как «чужого не видно» — то есть как успех проверки изоляции.
+    const probe = async (token: string): Promise<{ rows: number } | { refused: string }> => {
       const r = await fetch(`${env('SUPABASE_URL')}/rest/v1/patients?select=id`, {
         headers: { apikey: anonKey, Authorization: `Bearer ${token}` },
       });
-      return r.ok ? ((await r.json()) as unknown[]).length : -1;
+      if (!r.ok) return { refused: `${r.status} ${(await r.text()).slice(0, 120)}` };
+      return { rows: ((await r.json()) as unknown[]).length };
     };
     const { data: tRow } = await sb.from('tenants').select('id').limit(1).maybeSingle();
     const own = await probe(await sign(String(tRow?.id)));
     const foreign = await probe(await sign('00000000-0000-0000-0000-000000000000'));
     const none = await probe(await sign(null));
-    ok(own > 0, 'по токену своего кабинета данные видны', `${own} пациентов`);
-    ok(foreign === 0, 'по токену чужого кабинета не видно ничего', `${foreign}`);
-    ok(none === 0, 'без claim о кабинете не видно ничего', `${none}`);
+
+    if ('refused' in own) {
+      // Первая же проба отказала — секрет не тот, каким подписаны ключи
+      // проекта. Дальше проверять нечего: остальные откажут так же, и их
+      // «ноль строк» прочитались бы как работающая изоляция.
+      ok(false, 'СЕКРЕТ ПОДПИСИ НЕ ПОДХОДИТ — база отвергает наши токены', own.refused);
+      ok(false, 'проверка изоляции не проведена',
+        'возьмите значение в Supabase → Settings → API → JWT Settings');
+    } else {
+      ok(own.rows > 0, 'по токену своего кабинета данные видны', `${own.rows} пациентов`);
+      ok('rows' in foreign && foreign.rows === 0, 'по токену чужого кабинета не видно ничего',
+        'rows' in foreign ? `${foreign.rows}` : foreign.refused);
+      ok('rows' in none && none.rows === 0, 'без claim о кабинете не видно ничего',
+        'rows' in none ? `${none.rows}` : none.refused);
+    }
   } else {
     ok(true, 'живая проба изоляции пропущена — не задан SUPABASE_JWT_SECRET',
       'политики готовы, включение одной переменной');
@@ -387,8 +403,14 @@ async function main() {
   await sb.from('memberships').delete().eq('subject', `tg:${DOC_UID}`);
   await sb.from('app_users').delete().like('subject', 'tg:9%');
   await sb.from('staff_invites').delete().eq('token', inviteToken);
-  const { data: left } = await sb.from('memberships').select('subject');
-  ok((left ?? []).length === 1, 'в кабинете остался один владелец — вы', (left ?? []).map((m) => m.subject).join(', '));
+  // Смысл проверки — что проверочные аккаунты не остались в кабинетах, а не
+  // что кабинет в базе один. Пока кабинет был единственным, эти две вещи
+  // совпадали; с приходом второго владельца проверка стала падать на
+  // совершенно нормальном положении дел.
+  const { data: left } = await sb.from('memberships').select('subject, tenant_id');
+  const testers = (left ?? []).filter((m) => /^tg:9\d{5}$/.test(String(m.subject)));
+  ok(testers.length === 0, 'проверочные аккаунты в кабинетах не остались',
+    testers.map((m) => m.subject).join(', ') || `живых членств ${(left ?? []).length}`);
 
   console.log(`\n${problems.length ? `НЕ ГОТОВО: ${problems.join('; ')}` : 'Готово к показу.'}`);
   if (problems.length) process.exit(1);
