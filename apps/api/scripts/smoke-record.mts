@@ -38,6 +38,9 @@ const patientId=booked.body.patientId as string;
 
 const started=await docA(`/doctor/appointments/${booked.body.appointmentId}/start`,{method:'POST'});
 ok(started.status===200,'приём начат');
+const recAopen=await docA(`/doctor/patients/${patientId}/record`);
+ok(recAopen.status===200,'при открытом приёме карта открыта врачу',String(recAopen.body.error??''));
+ok((recAopen.body.entries??[]).length===0,'но в ней пока пусто — приём не закрыт');
 const beforeClose=(await sb.from('clinical_entries').select('*',{count:'exact',head:true}).eq('person_subject',`tg:${PAT}`)).count;
 ok((beforeClose??0)===0,'пока приём открыт истории нет — это черновик врача');
 const closed=await docA(`/doctor/visits/${started.body.visitId}/close`,{method:'POST'});
@@ -47,6 +50,26 @@ ok((sealed??[]).length===1,'закрытие запечатало запись',
 ok(sealed![0].author_cabinet==='Первый Кабинет','кабинет записан снимком',String(sealed![0].author_cabinet));
 ok(sealed![0].author_doctor==='Каримов А.А.','врач записан снимком',String(sealed![0].author_doctor));
 ok(sealed![0].sealed_at!=null,'момент запечатывания зафиксирован');
+
+console.log('\n── Карта у пациента ──');
+const mine=await pat('/me/record');
+ok(mine.status===200,'пациент открыл свою карту',String(mine.body.error??''));
+ok((mine.body.entries??[]).length===1,'в карте одна запись',`${(mine.body.entries??[]).length}`);
+ok(mine.body.entries?.[0]?.cabinet==='Первый Кабинет','видно, где лечили');
+ok(mine.body.entries?.[0]?.doctor==='Каримов А.А.','видно, кто лечил');
+ok(!JSON.stringify(mine.body).includes('cost') && !JSON.stringify(mine.body).includes('margin'),
+   'себестоимости в карте пациента нет');
+
+console.log('\n── Врач: доступ живёт ровно от записи до закрытия приёма ──');
+// Приём УЖЕ закрыт, и права у врача больше нет — таково правило: карта
+// открыта, пока пациент записан или приём не закрыт. Проверяем именно это,
+// а не «врач всегда видит своего пациента».
+const recAafter=await docA(`/doctor/patients/${patientId}/record`);
+ok(recAafter.status===403,'после закрытия приёма карта закрылась и для лечившего врача',
+   `${recAafter.status}`);
+const scaleA=await docA('/doctor/cabinet/scale');
+ok(Number(scaleA.body.records)===1,'кабинет знает, сколько записей переживёт его удаление',
+   JSON.stringify(scaleA.body.records));
 
 console.log('\n── Второй кабинет видит историю, но не всегда ──');
 const before=await sb.rpc('doctor_may_see_person',{p_tenant_id:tB,p_subject:`tg:${PAT}`});
@@ -66,8 +89,10 @@ ok((rec.data as any[])[0].cabinet==='Первый Кабинет','видно, �
 
 console.log('\n── Исправление дополнением ──');
 const entry=sealed![0].id;
-const am=await sb.rpc('amend_clinical_entry',{p_tenant_id:tB,p_entry_id:entry,p_note:'Зуб 26, а не 27',p_actor:`tg:${B}`});
-ok(!am.error,'дополнение добавлено',String(am.error?.message??''));
+const empty=await docB(`/doctor/record/${entry}/amend`,{method:'POST',body:JSON.stringify({note:'   '})});
+ok(empty.status===400,'пустое дополнение отклонено',String(empty.status));
+const am=await docB(`/doctor/record/${entry}/amend`,{method:'POST',body:JSON.stringify({note:'Зуб 26, а не 27'})});
+ok(am.status===200,'дополнение добавлено',String(am.body.error??''));
 const { data: all } = await sb.from('clinical_entries').select('id, amends, note').eq('person_subject',`tg:${PAT}`);
 ok((all??[]).length===2,'записей стало две — исходная цела');
 ok((all??[]).some(e=>e.amends===entry),'дополнение ссылается на исходную');
@@ -79,9 +104,26 @@ const { count: logged } = await sb.from('access_log').select('*',{count:'exact',
   .in('action',['clinical_record','clinical_amend']).eq('detail',`tg:${PAT}`);
 ok((logged??0)>=2,'обращения к истории записаны',`${logged}`);
 
+console.log('\n── Доступ закрывается вместе с записью ──');
+const recB=await docB(`/doctor/patients/${booked2.body.patientId}/record`);
+ok(recB.status===200 && (recB.body.entries??[]).length===2,'пока пациент записан — карта открыта',
+   `${recB.status} ${(recB.body.entries??[]).length}`);
+const cancelled=await pat2(`/me/appointments/${booked2.body.appointmentId}/cancel`,{method:'POST'});
+ok(cancelled.status===200,'пациент отменил запись',String(cancelled.body.error??''));
+const recBafter=await docB(`/doctor/patients/${booked2.body.patientId}/record`);
+ok(recBafter.status===403,'ПОСЛЕ ОТМЕНЫ карта закрылась',`${recBafter.status}`);
+const amAfter=await docB(`/doctor/record/${entry}/amend`,{method:'POST',body:JSON.stringify({note:'поздно'})});
+ok(amAfter.status===400,'дополнить закрытую карту нельзя',`${amAfter.status}`);
+
 console.log('\n── Кабинет исчезает, история остаётся ──');
 const killed=await docA('/doctor/cabinet',{method:'DELETE'});
 ok(killed.status===200,'первый кабинет удалён',String(killed.body.error??''));
+// Без start_param: у человека больше нет кабинета, из которого он пришёл, —
+// и карта всё равно должна открыться. Это и есть «карта принадлежит вам».
+const stillMine=await as(PAT)('/me/record');
+ok((stillMine.body.entries??[]).length===2,'пациент по-прежнему открывает свою карту',
+   `${(stillMine.body.entries??[]).length}`);
+ok((stillMine.body.entries??[]).every((e:any)=>e.cabinet),'в карте осталось имя закрытого кабинета');
 const { data: survived } = await sb.from('clinical_entries').select('*').eq('person_subject',`tg:${PAT}`);
 ok((survived??[]).length===2,'записи целы после удаления кабинета',`${(survived??[]).length}`);
 const first=(survived??[]).find(e=>e.id===entry)!;

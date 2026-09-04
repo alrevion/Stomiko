@@ -44,6 +44,15 @@ const info = await patCall('/book/info');
 const svc = (info.body.services ?? [])[0];
 const slots = await patCall(`/book/slots?serviceId=${svc.id}&days=21`);
 const booked = await patCall('/book', { method:'POST', body: JSON.stringify({ serviceId: svc.id, startsAt: slots.body.days[0].times[0], name:'Пациент Обхода' }) });
+// Закрытый приём, чтобы «Моя карта» не была пустой на обходе: записи в ней
+// появляются только при закрытии приёма.
+const started = await doc(`/doctor/appointments/${booked.body.appointmentId}/start`, { method:'POST' });
+await doc(`/doctor/visits/${started.body.visitId}/close`, { method:'POST' });
+// И ещё одна запись впереди — иначе карта пациента закрыта для врача и
+// кнопку «Открыть карту» на обходе не увидеть.
+const slots2 = await patCall(`/book/slots?serviceId=${svc.id}&days=21`);
+await patCall('/book', { method:'POST', body: JSON.stringify({ serviceId: svc.id, startsAt: slots2.body.days[0].times[0], name:'Пациент Обхода' }) });
+
 // План лечения, чтобы было что смотреть.
 const svcs = (await doc('/doctor/services?withCost=1')).body.services;
 await doc('/doctor/plans', { method:'POST', body: JSON.stringify({ patientId: booked.body.patientId, title:'Лечение 26 зуба', status:'active',

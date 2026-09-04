@@ -428,6 +428,52 @@ doctor.get('/patients/:id', async (c) => {
   return c.json({ ...(card as object), accessLog: log });
 });
 
+/**
+ * История лечения человека — та, что он принёс с собой.
+ *
+ * Отдельным маршрутом, а не полем карточки: это единственное место, где
+ * кабинет видит записи ЧУЖИХ кабинетов, и открывается оно осознанным
+ * нажатием. Иначе журнал доступа заполнялся бы автоматическими обращениями
+ * и перестал бы что-либо значить.
+ *
+ * Subject берётся из карточки этого кабинета, а не из запроса: иначе врач
+ * подставил бы чужой и прочитал историю человека, который к нему не ходит.
+ * Право всё равно проверяет функция БД — здесь оно проверяется дважды.
+ */
+doctor.get('/patients/:id/record', async (c) => {
+  const scope = c.get('scope');
+  const { data } = await scope.select('patients', 'telegram_subject')
+    .eq('id', c.req.param('id')).maybeSingle();
+  const subject = (data as { telegram_subject?: string } | null)?.telegram_subject;
+  if (!subject) {
+    return c.json({ entries: [], noTelegram: true });
+  }
+  try {
+    const entries = await scope.rpc<unknown[]>('person_record_for_doctor', {
+      p_subject: subject, p_actor: c.get('identity').subject,
+    });
+    return c.json({ entries: entries ?? [] });
+  } catch (err) {
+    return c.json({ error: (err as Error).message.replace(/^person_record_for_doctor: /, '') }, 403);
+  }
+});
+
+/** Дополнение к чужой записи. Исправить её нельзя — только уточнить рядом. */
+doctor.post('/record/:entryId/amend', async (c) => {
+  const scope = c.get('scope');
+  const b = await c.req.json<{ note?: string }>().catch(() => ({} as { note?: string }));
+  try {
+    const res = await scope.rpc<Record<string, unknown>>('amend_clinical_entry', {
+      p_entry_id: c.req.param('entryId'),
+      p_note: b.note ?? '',
+      p_actor: c.get('identity').subject,
+    });
+    return c.json(res);
+  } catch (err) {
+    return c.json({ error: (err as Error).message.replace(/^amend_clinical_entry: /, '') }, 400);
+  }
+});
+
 /** Заметка о пациенте: аллергия, особенности, о чём договорились. */
 doctor.put('/patients/:id', async (c) => {
   const scope = c.get('scope');

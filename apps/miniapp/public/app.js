@@ -34,6 +34,12 @@ const hhmm = (iso) => new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit
 const dayNum = (d) => Number(d.slice(8, 10));
 const dateLabel = (d, opts = { day: 'numeric', month: 'long' }) =>
   new Date(`${d}T12:00:00+05:00`).toLocaleDateString('ru-RU', { ...opts, timeZone: TZ });
+/** «21 запись», «22 записи», «25 записей» — правило по последним цифрам. */
+const plural = (n, one, few, many) => {
+  const a = Math.abs(Number(n)) % 100;
+  if (a % 10 === 0 || a % 10 > 4 || (a >= 11 && a <= 14)) return many;
+  return a % 10 === 1 ? one : few;
+};
 const esc = (s) => String(s ?? '').replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
 const localDate = (off = 0) => new Date(Date.now() + off * 864e5).toLocaleDateString('en-CA', { timeZone: TZ });
 const addDays = (d, n) => {
@@ -131,6 +137,7 @@ const ICON = {
   cabinet: '<path d="M4 20V9.5L12 4l8 5.5V20"/><path d="M9.5 20v-5.5h5V20"/>',
   book: '<path d="M12 4v16M4 12h16"/><circle cx="12" cy="12" r="9"/>',
   my: '<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/><path d="m8.5 15 2.2 2.2L15.5 13"/>',
+  card: '<path d="M12 3.2c-1.2 0-1.9.6-3 .6-2 0-3.5 1.5-3.5 4 0 3 1 4.6 1.6 7 .4 1.6.7 3 1.9 3 1.4 0 1.3-2.4 3-2.4s1.6 2.4 3 2.4c1.2 0 1.5-1.4 1.9-3 .6-2.4 1.6-4 1.6-7 0-2.5-1.5-4-3.5-4-1.1 0-1.8-.6-3-.6z"/>',
 };
 const svg = (d) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"
   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
@@ -143,7 +150,10 @@ function setTabs(role) {
        { k: 'stock', label: 'Склад', fn: docStock },
        { k: 'cabinet', label: 'Кабинет', fn: docMenu }]
     : [{ k: 'book', label: 'Запись', fn: patServices },
-       { k: 'my', label: 'Мои записи', fn: patMy }];
+       { k: 'my', label: 'Мои записи', fn: patMy },
+       // Карта — не подраздел записей: она принадлежит человеку, а не
+       // кабинету, и переживает уход от врача. Раздел первого уровня.
+       { k: 'card', label: 'Моя карта', fn: patRecord }];
   navEl.style.setProperty('--n', TABS.length);
   navEl.innerHTML = '<div class="nav-ind"></div>' + TABS.map((t, i) =>
     `<button data-tab="${i}" aria-label="${t.label}">${svg(ICON[t.k])}<span>${t.label}</span></button>`).join('');
@@ -305,6 +315,10 @@ function welcome() {
  * врача, а отвечать ей нечем.
  */
 async function needLink(city = '', query = '') {
+  // Экран поиска — корень для человека без кабинета. Без записи в стеке
+  // системная кнопка «назад» закрывала бы приложение с любого экрана,
+  // открытого отсюда, — например с его собственной карты.
+  if (!S.stack.length) S.stack.push([needLink, []]);
   spinner('Ищем кабинеты…');
   const { cabinets, cities } = await api(
     `/find?city=${encodeURIComponent(city)}&q=${encodeURIComponent(query)}`);
@@ -348,6 +362,8 @@ async function needLink(city = '', query = '') {
 
       <div class="sectiontitle">Другое</div>
       <div class="picker">
+        <button data-act="myrecord"><div class="name">Моя карта</div>
+          <div class="price">что вам лечили — остаётся у вас</div></button>
         ${S.d.me?.canBeDoctor
           ? `<button data-act="switcher"><div class="name">Вернуться в кабинет</div>
               <div class="price">вы работаете в Stomiko как врач</div></button>`
@@ -539,6 +555,7 @@ const TOUR = [
   { k: 'techcards', name: 'Техкарты',   why: 'нормы расхода, которые вы правите под себя' },
   { k: 'margin',    name: 'Сверх материалов', why: 'какая услуга съедает расходники' },
   { k: 'link',      name: 'Ссылка для пациентов', why: 'по ней записываются сами' },
+  { k: 'record',    name: 'Карта пациента', why: 'лечение уходит вместе с человеком — этого нет ни у кого' },
 ];
 
 /**
@@ -555,6 +572,22 @@ async function tourGo(key) {
   if (key === 'techcards') return go(docTechcards);
   if (key === 'margin') return go(docMargin);
   if (key === 'link') return go(docLink);
+  if (key === 'record') {
+    // Карта открыта, пока пациент записан или приём не закрыт, — значит и
+    // показывать её на знакомстве надо на том, у кого запись есть.
+    spinner('Ищем пациента…');
+    const { patients } = await api('/doctor/patients');
+    for (const who of patients ?? []) {
+      const card = await api(`/doctor/patients/${who.id}`);
+      const open = card.visits.some((v) => v.status === 'open')
+        || card.appointments.some((a) => a.status === 'scheduled'
+          && new Date(a.startsAt).getTime() > Date.now() - 864e5);
+      if (!open) continue;
+      S.d.patient = { ...card, id: who.id };
+      return go(docRecord, who.id);
+    }
+    return toast('Карта открывается, когда пациент записан. Запишите кого-нибудь — и вернитесь', true);
+  }
   if (key === 'visit') {
     // «Откройте любой прошлый приём» — открываем сами: на знакомстве врач не
     // обязан догадываться, что приёмы лежат внутри карточки пациента.
@@ -1177,6 +1210,13 @@ async function docPatient(patientId) {
   S.d.money = fin;
 
   const upcoming = p.appointments.filter((a) => a.status === 'scheduled' && new Date(a.startsAt) >= new Date());
+  // То же правило, что и в базе: карта открыта, пока пациент записан или приём
+  // не закрыт. Кнопку, которая заведомо упрётся в отказ, лучше не показывать.
+  // Сутки назад, а не «с этой минуты»: приём в 10:00, к которому врач подошёл
+  // в 10:20, ещё не начат — но карта ему уже нужна.
+  const hasAccess = p.visits.some((v) => v.status === 'open')
+    || p.appointments.some((a) => a.status === 'scheduled'
+      && new Date(a.startsAt).getTime() > Date.now() - 864e5);
   const spent = p.visits.reduce((s, v) => s + Number(v.revenue), 0);
 
   render(`
@@ -1237,6 +1277,21 @@ async function docPatient(patientId) {
         <span class="mono">${money(x.amount)} · ${dateLabel(String(x.at).slice(0, 10), { day: 'numeric', month: 'short' })}</span>
       </div>`).join('')}</div>` : ''}
 
+      <div class="sectiontitle">Карта пациента</div>
+      <div class="card">
+        <div class="note" style="margin:0 0 10px">${!p.inTelegram
+          ? `Карта человека привязана к его Telegram. Этот пациент заведён вручную,
+             своей карты у него нет — здесь только приёмы в вашем кабинете.`
+          : hasAccess
+          ? `Что этому человеку лечили — в том числе в других кабинетах. Карта
+             принадлежит ему; вам она открыта, пока он записан или приём не закрыт.
+             Каждое открытие записывается в журнал.`
+          : `Карта принадлежит пациенту, и сейчас она закрыта: он не записан и приёма
+             нет. Откроется сама, как только он запишется, — и закроется, когда вы
+             закроете приём. Уточнить запись можно только в это время.`}</div>
+        ${p.inTelegram && hasAccess ? '<button class="mini" data-act="record">Открыть карту</button>' : ''}
+      </div>
+
       <div class="sectiontitle">История приёмов</div>
       ${p.visits.length ? `<div class="card">${p.visits.map((v) => `
         <div class="stockrow" data-visit="${v.id}">
@@ -1275,6 +1330,87 @@ async function docPatient(patientId) {
         </div>`).join('')}</div>` : ''}
     </main>
   `);
+}
+
+/**
+ * Карта человека глазами врача.
+ *
+ * Ровно тот же список, что видит пациент: врачу нельзя показывать больше,
+ * чем видит владелец карты. Разница одна — кнопка уточнения: изменить чужую
+ * запись нельзя никому, а дополнить может тот, у кого пациент лечится сейчас.
+ *
+ * Отказ показываем текстом из базы, а не «нет доступа»: врач должен понимать,
+ * что сделать — записать пациента или открыть приём.
+ */
+async function docRecord(patientId) {
+  markSeen('record');
+  spinner('Открываем карту…');
+  let data;
+  try {
+    data = await api(`/doctor/patients/${patientId}/record`);
+  } catch (err) {
+    return render(`
+      <header><h1>Карта закрыта</h1></header>
+      <main><div class="card warn">
+        <div class="note" style="margin:0">${esc(err.message)}</div>
+      </div>
+      <div class="card"><div class="note" style="margin:0">Карта принадлежит пациенту.
+      Она открывается вам с той минуты, как он к вам записан, и остаётся открытой,
+      пока приём не закрыт.</div></div></main>
+    `);
+  }
+
+  const entries = data.entries ?? [];
+  const roots = entries.filter((e) => !e.amends);
+  S.d.record = { patientId, entries };
+
+  render(`
+    <header><h1>Карта: ${esc(S.d.patient?.name ?? '')}</h1>
+      <span class="sub">${roots.length
+        ? `${roots.length} ${plural(roots.length, 'запись', 'записи', 'записей')} · ${
+            new Set(entries.map((e) => e.cabinet)).size} ${
+            plural(new Set(entries.map((e) => e.cabinet)).size, 'кабинет', 'кабинета', 'кабинетов')}`
+        : 'пусто'}</span></header>
+    <main>
+      ${data.noTelegram ? `<div class="card"><div class="note" style="margin:0">
+        У этого пациента нет Telegram, значит нет и своей карты.</div></div>` : ''}
+      ${roots.length ? recordList(entries, { amendable: true })
+        : `<div class="card"><div class="note" style="margin:0">Записей ещё нет. Первая
+           появится, когда вы закроете приём: по каждой оказанной услуге — своя строка.</div></div>`}
+      <div class="card">
+        <div class="note" style="margin:0">Запись нельзя изменить и нельзя удалить —
+        ни вам, ни автору. Ошибка исправляется дополнением: исходный текст остаётся,
+        уточнение встаёт рядом, и следующий врач видит оба.</div>
+      </div>
+    </main>
+  `);
+}
+
+/** Дополнение к записи: отдельный экран, потому что это текст, а не «да/нет». */
+function docAmend(entryId) {
+  const e = (S.d.record?.entries ?? []).find((x) => x.id === entryId);
+  if (!e) return back();
+  render(`
+    <header><h1>Уточнение</h1>
+      <span class="sub">${esc(e.service)}, ${dateLabel(e.occurredOn)}</span></header>
+    <main>
+      <div class="card">
+        <div class="row"><span class="name">${esc(e.service)}${
+          e.tooth ? ` · зуб ${esc(e.tooth)}` : ''}<br>
+          <span class="muted">${esc(e.cabinet)}${e.doctor ? `, ${esc(e.doctor)}` : ''}</span></span></div>
+        ${e.note ? `<div class="note" style="margin:2px 0 0">${esc(e.note)}</div>` : ''}
+      </div>
+      <div class="card">
+        <label class="fieldlabel">Что уточняете</label>
+        <textarea class="field" id="amendnote"
+          placeholder="Лечили 36, а не 35 — по снимку от 12.03"></textarea>
+        <div class="note">Исходная запись останется как есть: её нельзя изменить
+        и нельзя удалить. Ваше уточнение встанет рядом, с вашим именем и датой.</div>
+      </div>
+    </main>
+    <button class="primary" data-act="saveamend" data-id="${entryId}">Добавить уточнение</button>
+  `);
+  setTimeout(() => document.getElementById('amendnote')?.focus(), 80);
 }
 
 /* ── План лечения ──────────────────────────────────────────────────────
@@ -1547,7 +1683,9 @@ async function docMenu() {
         <div class="sectiontitle">Опасная зона</div>
         <div class="card">
           <div class="note" style="margin:0 0 10px">${S.d.me?.staffOf?.find((x) => x.tenantId === S.d.me.tenantId)?.role === 'owner'
-            ? 'Удаление кабинета стирает карты пациентов, историю приёмов, склад и расчёты. Восстановить их будет нечем.'
+            ? `Удаление кабинета стирает его записи, приёмы, планы, склад и расчёты.
+               Восстановить их будет нечем. Медицинские карты остаются у самих
+               пациентов — их удалить нельзя.`
             : 'Вы перестанете видеть этот кабинет. Данные кабинета останутся у его владельца.'}</div>
           <button class="mini danger" data-act="dangerzone">${
             S.d.me?.staffOf?.find((x) => x.tenantId === S.d.me.tenantId)?.role === 'owner'
@@ -2402,6 +2540,90 @@ function patPlan(planId) {
   `);
 }
 
+/**
+ * Медицинская карта — общий вид для обеих сторон.
+ *
+ * Один и тот же список читают пациент и врач: разными их делает не вёрстка,
+ * а право, и оно проверяется в базе. Две отдельные разметки для одних и тех
+ * же данных разъехались бы через месяц, и разъехались бы молча.
+ *
+ * Уточнения не идут отдельными строками: дополнение без записи, к которой
+ * оно относится, читается как самостоятельное лечение. Оно встаёт под своей
+ * записью — так следующий врач видит и что записали, и что потом уточнили.
+ */
+function recordList(entries, { amendable = false } = {}) {
+  const roots = entries.filter((e) => !e.amends);
+  const byParent = new Map();
+  for (const e of entries.filter((x) => x.amends)) {
+    byParent.set(e.amends, [...(byParent.get(e.amends) ?? []), e]);
+  }
+
+  const byDate = new Map();
+  for (const e of roots) byDate.set(e.occurredOn, [...(byDate.get(e.occurredOn) ?? []), e]);
+
+  const who = (e) => `${esc(e.cabinet)}${e.doctor ? `, ${esc(e.doctor)}` : ''}${
+    e.cabinetGone ? ' <span class="muted">(кабинет закрыт)</span>' : ''}`;
+
+  // Год — только если он не нынешний: «4 СЕНТЯБРЯ 2026 Г.» в заголовке
+  // раздела читается хуже, чем «4 СЕНТЯБРЯ», а в старых записях год нужен.
+  const thisYear = String(new Date().getFullYear());
+  const head = (d) => dateLabel(d, d.slice(0, 4) === thisYear
+    ? { day: 'numeric', month: 'long' }
+    : { day: 'numeric', month: 'long', year: 'numeric' }).replace(' г.', '');
+
+  return [...byDate.entries()].map(([date, list]) => `
+    <div class="sectiontitle">${head(date)}</div>
+    <div class="card">${list.map((e) => `
+      <div class="row"><span class="name">${esc(e.service)}${
+        e.tooth ? ` · зуб ${esc(e.tooth)}` : ''}${e.quantity > 1 ? ` · ${e.quantity}` : ''}<br>
+        <span class="muted">${who(e)}</span></span></div>
+      ${e.note ? `<div class="note" style="margin:2px 0 8px">${esc(e.note)}</div>` : ''}
+      ${(byParent.get(e.id) ?? []).map((a) => `
+        <div class="note" style="margin:2px 0 8px"><b>Уточнение</b> от ${
+          dateLabel(a.occurredOn, { day: 'numeric', month: 'short' })}, ${who(a)}:<br>${esc(a.note ?? '')}</div>`).join('')}
+      ${amendable ? `<button class="mini" data-amend="${e.id}">Уточнить эту запись</button>` : ''}
+    `).join('')}</div>`).join('');
+}
+
+/**
+ * Карта пациента у него самого.
+ *
+ * Смысл всего продукта в одном экране: человек уходит от врача, переезжает
+ * в другой город — и лечение уходит вместе с ним. Поэтому карта читается
+ * без активного кабинета и показывает записи кабинетов, которых уже нет.
+ */
+async function patRecord() {
+  spinner('Открываем карту…');
+  const { entries } = await api('/me/record').catch(() => ({ entries: [] }));
+  const roots = entries.filter((e) => !e.amends);
+  const cabinets = new Set(entries.map((e) => e.cabinet));
+
+  render(`
+    <header><h1>Моя карта</h1><span class="sub">${roots.length
+      ? `${roots.length} ${plural(roots.length, 'запись', 'записи', 'записей')}${
+          cabinets.size > 1 ? ` · ${cabinets.size} ${plural(cabinets.size, 'кабинет', 'кабинета', 'кабинетов')}` : ''}`
+      : 'пока пусто'}</span></header>
+    <main>
+      ${roots.length ? `<div class="card">
+        <div class="note" style="margin:0">Это ваша карта, а не кабинета. Новый стоматолог
+        увидит её, как только вы к нему запишетесь, — показывать и пересылать ничего
+        не нужно. Записи нельзя изменить задним числом: ошибку врач уточняет
+        дополнением, и видно оба текста.</div>
+      </div>
+      ${recordList(entries)}`
+      : `<div class="card">
+        <div class="note" style="margin:0">Здесь появится всё, что вам лечили: услуга, зуб,
+        дата, кабинет и врач. Запись добавляется, когда врач закрывает приём, — и остаётся
+        у вас навсегда, даже если кабинет закроется.</div>
+      </div>
+      <div class="empty">Пока вам ничего не лечили в Stomiko.</div>`}
+    </main>
+    ${TABS.some((t) => t.k === 'book')
+      ? '<button class="primary" data-act="tobook">Записаться</button>'
+      : '<button class="primary" data-act="findcab">Найти стоматолога</button>'}
+  `);
+}
+
 async function patMy() {
   spinner('Загрузка…');
   // Записи по ВСЕМ кабинетам, где человек лечится, а не только по активному:
@@ -2461,7 +2683,7 @@ async function patMy() {
    ══════════════════════════════════════════════════════════════════════════ */
 
 document.addEventListener('click', async (e) => {
-  const el = e.target.closest('[data-day],[data-week],[data-appt],[data-act],[data-service],[data-q],[data-tc],[data-svc],[data-date],[data-time],[data-tourgo],[data-city],[data-pick-cab],[data-cancel],[data-resched],[data-rtime],[data-tplan],[data-psvc],[data-tq],[data-trm],[data-tstage],[data-pmethod],[data-mplan],[data-wd],[data-add],[data-rm],[data-rmov],[data-rmline],[data-material],[data-batch],[data-unit],[data-pick],[data-wsvc],[data-reason],[data-patient],[data-visit],[data-free],[data-tab],[data-mode],[data-tpl],[data-plan]');
+  const el = e.target.closest('[data-day],[data-week],[data-appt],[data-act],[data-service],[data-q],[data-tc],[data-svc],[data-date],[data-time],[data-tourgo],[data-city],[data-pick-cab],[data-cancel],[data-resched],[data-rtime],[data-tplan],[data-psvc],[data-tq],[data-trm],[data-tstage],[data-pmethod],[data-mplan],[data-wd],[data-add],[data-rm],[data-rmov],[data-rmline],[data-material],[data-batch],[data-unit],[data-pick],[data-wsvc],[data-reason],[data-patient],[data-visit],[data-free],[data-tab],[data-mode],[data-tpl],[data-plan],[data-amend]');
   if (!el) return;
   const d = el.dataset;
   haptic();
@@ -2486,6 +2708,7 @@ document.addEventListener('click', async (e) => {
     if (d.week) return docWeek(addDays(S.d.weekStart, Number(d.week)));
     if (d.appt) return go(docAppointment, d.appt);
     if (d.patient) return go(docPatient, d.patient);
+    if (d.amend) return go(docAmend, d.amend);
     if (d.visit) return go(docVisit, d.visit);
     // Свободное окно в ленте дня — это приглашение занять его, а не просто
     // подпись: врач тапает по нему и сразу попадает в «Занять время».
@@ -2643,12 +2866,12 @@ document.addEventListener('click', async (e) => {
         const scale = await api('/doctor/cabinet/scale');
         const owner = scale.role === 'owner';
         const rows = owner ? [
-          ['карточек пациентов', scale.patients],
-          ['закрытых приёмов', scale.visits],
-          ['предстоящих записей', scale.appointments],
-          ['планов лечения', scale.plans],
-          ['записей об оплатах', scale.payments],
-          ['позиций на складе', scale.materials],
+          [`${plural(scale.patients, 'карточка пациента', 'карточки пациентов', 'карточек пациентов')} в кабинете`, scale.patients],
+          [plural(scale.visits, 'закрытый приём', 'закрытых приёма', 'закрытых приёмов'), scale.visits],
+          [plural(scale.appointments, 'предстоящая запись', 'предстоящие записи', 'предстоящих записей'), scale.appointments],
+          [plural(scale.plans, 'план лечения', 'плана лечения', 'планов лечения'), scale.plans],
+          [plural(scale.payments, 'запись об оплате', 'записи об оплатах', 'записей об оплатах'), scale.payments],
+          [plural(scale.materials, 'позиция на складе', 'позиции на складе', 'позиций на складе'), scale.materials],
         ].filter(([, n]) => Number(n) > 0) : [];
         const ok = await ask({
           title: owner ? 'Удалить кабинет?' : 'Выйти из кабинета?',
@@ -2657,7 +2880,11 @@ document.addEventListener('click', async (e) => {
             // у него пациентов. Со счётом это уже решение.
             ? `<b>${esc(scale.name ?? '')}</b> и всё, что в нём:<br>${
                 rows.length ? rows.map(([l, n]) => `${n} ${l}`).join('<br>') : 'кабинет пока пуст'}
-               <br><br>Отменить это будет нечем. Медицинские карты пациентов исчезнут вместе с кабинетом.`
+               <br><br>Отменить это будет нечем.${Number(scale.records) > 0
+                 ? ` Лечение, которое вы уже провели — ${scale.records} ${
+                     plural(scale.records, 'запись', 'записи', 'записей')
+                   }, — останется в картах самих пациентов: карты принадлежат им, а не кабинету.`
+                 : ''}`
             : `Вы перестанете видеть <b>${esc(scale.name ?? '')}</b>. Данные останутся у владельца.`,
           confirm: owner ? 'Да, удалить' : 'Выйти',
         });
@@ -2682,6 +2909,20 @@ document.addEventListener('click', async (e) => {
         S.d.listing = { ...l, ...r, listed: Boolean(r.listed) };
         toast(r.listed ? 'Кабинет показывается в поиске' : 'Кабинет убран из поиска');
         return docListing();
+      }
+      case 'record': return go(docRecord, S.d.patient.id);
+      case 'saveamend': {
+        const note = document.getElementById('amendnote')?.value.trim() ?? '';
+        if (!note) return toast('Дополнение без текста ничего не уточняет', true);
+        el.disabled = true; el.textContent = 'Добавляем…';
+        await api(`/doctor/record/${d.id}/amend`, {
+          method: 'POST', body: JSON.stringify({ note }),
+        });
+        toast('Уточнение добавлено');
+        // Возврат на карту, а не назад: уточнение имеет смысл только рядом
+        // с записью, к которой относится, — его и надо увидеть.
+        S.stack.pop();
+        return go(docRecord, S.d.record.patientId);
       }
       case 'newplan': return go(docPlanEdit, null);
       case 'editplan': return go(docPlanEdit, S.d.tplanView.id);
@@ -2961,6 +3202,8 @@ document.addEventListener('click', async (e) => {
       case 'patients': return goTab(TABS.findIndex((t) => t.k === 'patients'));
       case 'iampatient':
         return S.d.me.patientOf.length ? (setTabs('patient'), go(TABS[0].fn)) : needLink();
+      case 'myrecord': return go(patRecord);
+      case 'findcab': return needLink();
       case 'iamdoctor': return doctorEntry();
       case 'newcabinet': return go(newCabinet);
       case 'tour': return go(tourScreen);
