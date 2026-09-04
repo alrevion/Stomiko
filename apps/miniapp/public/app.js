@@ -394,23 +394,50 @@ async function docListing() {
         </div>
 
         <div class="sectiontitle">Так вас увидят</div>
-        <div class="stockrow">
-          <div class="body">
-            <div class="name">${esc(l.name ?? 'Кабинет')}</div>
-            <div class="muted">${esc(l.city || 'город не указан')}${
-              l.landmark ? `, ${esc(l.landmark)}` : l.address ? `, ${esc(l.address)}` : ''}</div>
-            <div class="muted">Ближайшее время подставится само</div>
-          </div>
-          <div class="qty-val mono">${esc(l.phone || '—')}<small>телефон</small></div>
-        </div>
+        <div class="stockrow" id="lpreview">${listingPreview()}</div>
       </main>
       <button class="primary ${l.listed ? 'danger' : ''}" data-act="savelisting"
         data-listed="${l.listed ? '0' : '1'}" ${!ready && !l.listed ? 'disabled' : ''}>
         ${l.listed ? 'Убрать из поиска' : ready ? 'Показывать в поиске' : 'Заполните город, адрес и телефон'}</button>
     `);
+    // Ввод не вызывает перерисовку — иначе поле теряло бы фокус на каждой
+    // букве. Поэтому состояние читается на каждый ввод, а меняются ровно две
+    // вещи: подпись кнопки и предпросмотр. Без этого врач заполнял поля, а
+    // кнопка оставалась «заполните город, адрес и телефон» навсегда.
+    for (const id of ['lcity', 'laddr', 'lland', 'lphone']) {
+      const el = document.getElementById(id);
+      if (el) el.oninput = syncListing;
+    }
   };
   S.d.redraw = () => { readListingForm(); draw(); };
   draw();
+}
+
+/** Предпросмотр карточки: ровно то, что увидят посторонние. */
+function listingPreview() {
+  const l = S.d.listing ?? {};
+  const place = [l.city, l.landmark || l.address].filter(Boolean).join(', ');
+  return `<div class="body">
+      <div class="name">${esc(l.name ?? 'Кабинет')}</div>
+      <div class="muted">${esc(place || 'город и адрес не указаны')}</div>
+      <div class="muted">Ближайшее время подставится само</div>
+    </div>
+    <div class="qty-val mono">${esc(l.phone || '—')}<small>телефон</small></div>`;
+}
+
+/** Кнопка и предпросмотр догоняют то, что уже набрано в полях. */
+function syncListing() {
+  readListingForm();
+  const l = S.d.listing;
+  const ready = Boolean(l.city && l.address && l.phone);
+  const btn = document.querySelector('.primary[data-act="savelisting"]');
+  if (btn) {
+    btn.disabled = !ready && !l.listed;
+    btn.textContent = l.listed ? 'Убрать из поиска'
+      : ready ? 'Показывать в поиске' : 'Заполните город, адрес и телефон';
+  }
+  const prev = document.getElementById('lpreview');
+  if (prev) prev.innerHTML = listingPreview();
 }
 
 function readListingForm() {

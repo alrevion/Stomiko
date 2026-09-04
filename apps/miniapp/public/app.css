@@ -107,6 +107,20 @@
   /* Высота дока + воздух под ним: на неё отступает низ любого списка,
      иначе последняя строка навсегда прячется за панелью. */
   --dock-clear: calc(var(--dock-h) + 20px + var(--safe-b));
+
+  /* ── Высота приложения ────────────────────────────────────────────────
+     100dvh — это высота ВЕБВЬЮ, а не видимой части листа Telegram. На iOS
+     лист занимает не весь вебвью, и разница уходит вниз, за нижнюю кромку.
+     Всё, что привязано к низу окна, там и оказывалось: кнопка «Сохранить»
+     висела на 160 пикселей ниже видимого края и была недоступна.
+
+     Telegram сообщает настоящую видимую высоту переменной, которую сам и
+     обновляет при изменении окна. Вне Telegram её нет — тогда обе величины
+     совпадают и --below обращается в ноль. */
+  --app-h: var(--tg-viewport-stable-height, 100dvh);
+  /* Сколько вебвью торчит ниже листа. На эту величину поднимается всё
+     закреплённое у низа. */
+  --below: max(0px, calc(100dvh - var(--app-h)));
 }
 
 /* Свои тёмные значения включаются ТОЛЬКО когда темы Telegram нет вовсе.
@@ -142,16 +156,23 @@ body {
   /* Убирает 300 мс задержку тапа, не отключая масштабирование. */
   touch-action: manipulation;
   overscroll-behavior-y: contain;
-  padding-bottom: var(--dock-clear);
 }
 
 /* Низ экрана занят закреплённой кнопкой, доком, или обоими сразу —
-   отступ под лентой считается по тому, что там реально стоит. */
-body.has-cta { padding-bottom: calc(78px + var(--safe-b)); }
-body.has-nav { padding-bottom: var(--dock-clear); }
-body.has-nav.has-cta { padding-bottom: calc(var(--dock-clear) + 66px); }
-
-#root { min-height: 100dvh; }
+   отступ под лентой считается по тому, что там реально стоит.
+   Отступ живёт на #root, а не на body: при box-sizing: border-box он входит
+   в min-height, и короткий экран перестаёт прокручиваться «в пустоту» —
+   раньше любая страница была выше окна ровно на этот отступ. */
+#root {
+  min-height: var(--app-h);
+  /* --below входит и сюда: панель с кнопкой поднялись над невидимой частью
+     вебвью, значит на столько же должен вырасти отступ под лентой. Иначе
+     последняя строка списка навсегда прячется за панелью. */
+  padding-bottom: calc(var(--below) + var(--dock-clear));
+}
+body.has-cta #root { padding-bottom: calc(var(--below) + 78px + var(--safe-b)); }
+body.has-nav #root { padding-bottom: calc(var(--below) + var(--dock-clear)); }
+body.has-nav.has-cta #root { padding-bottom: calc(var(--below) + var(--dock-clear) + 66px); }
 
 /* ══ Шапка экрана ═══════════════════════════════════════════════════════
    Заголовок остаётся на месте при прокрутке ленты под ним. Фон — стекло:
@@ -268,7 +289,8 @@ button { font: inherit; }
 .primary {
   position: fixed;
   left: var(--s3); right: var(--s3);
-  bottom: calc(var(--s3) + var(--safe-b));
+  /* + --below: подняться над той частью вебвью, которой не видно. */
+  bottom: calc(var(--below) + var(--s3) + var(--safe-b));
   z-index: 30;
   min-height: 54px;
   border: 0;
@@ -284,7 +306,7 @@ button { font: inherit; }
 /* Главное действие раздела и навигация не спорят за один и тот же низ:
    кнопка встаёт НАД доком, а не поверх него. Две панели друг на друге —
    это промахи вместо нажатий. */
-body.has-nav .primary { bottom: calc(var(--dock-clear) + var(--s2)); }
+body.has-nav .primary { bottom: calc(var(--below) + var(--dock-clear) + var(--s2)); }
 .primary:active { transform: scale(.975); }
 .primary[disabled] { opacity: .45; pointer-events: none; }
 .primary.secondary { background: var(--surface-3); color: var(--label); }
@@ -295,7 +317,7 @@ body.has-nav .primary { bottom: calc(var(--dock-clear) + var(--s2)); }
 .primary::before {
   content: '';
   position: fixed;
-  left: 0; right: 0; bottom: 0;
+  left: 0; right: 0; bottom: var(--below);
   height: calc(84px + var(--safe-b));
   background: linear-gradient(to top, var(--bg) 58%, transparent);
   pointer-events: none;
@@ -736,7 +758,7 @@ td { padding: var(--s2) 0; border-top: 1px solid var(--hair); vertical-align: to
 .nav {
   position: fixed;
   left: var(--s3); right: var(--s3);
-  bottom: calc(10px + var(--safe-b));
+  bottom: calc(var(--below) + 10px + var(--safe-b));
   z-index: 40;
   height: var(--dock-h);
   display: flex;
