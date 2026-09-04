@@ -35,8 +35,22 @@ const tid = reg.body.tenantId as string;
 const bill = await doc('/billing');
 ok(bill.body.subscription.status === 'trial', 'пробный период включён');
 ok(bill.body.subscription.daysLeft >= 13, 'даётся 14 дней', `${bill.body.subscription.daysLeft} дн.`);
-ok((bill.body.plans ?? []).length === 3, 'планы предлагаются',
-  (bill.body.plans ?? []).map((p:any)=>`${p.name_ru} ${p.price_uzs}`).join(', '));
+// Проверяем СОСТАВ, а не количество: раньше здесь стояло «ровно три», и
+// добавление проверочного плана на одну звезду уронило тест, хотя ничего
+// не сломалось. Важно, что все три рабочих срока предлагаются и у каждого
+// есть обе цены.
+const plans = (bill.body.plans ?? []) as any[];
+const need = ['monthly', 'halfyear', 'year'];
+const missing = need.filter((c) => !plans.some((p) => p.code === c));
+ok(missing.length === 0, 'предлагаются месяц, полгода и год', missing.join(', ') || 'все три');
+ok(plans.filter((p) => need.includes(p.code)).every((p) => Number(p.price_uzs) > 0 && Number(p.price_stars) > 0),
+  'у каждого срока есть цена в сумах и в звёздах',
+  plans.filter((p) => need.includes(p.code)).map((p) => `${p.name_ru} ${p.price_uzs}/${p.price_stars}⭐`).join(', '));
+// Длинный срок обязан быть дешевле в пересчёте на месяц, иначе он бессмыслен.
+const perMonth = (c: string) => { const p = plans.find((x) => x.code === c); return Number(p.price_uzs) / p.months; };
+ok(perMonth('year') < perMonth('halfyear') && perMonth('halfyear') < perMonth('monthly'),
+  'чем длиннее срок, тем дешевле месяц',
+  `${perMonth('monthly')} → ${perMonth('halfyear')} → ${perMonth('year')}`);
 ok((await doc('/doctor/calendar')).status === 200, 'кабинет работает');
 
 console.log('\n── Заморозка ──');
