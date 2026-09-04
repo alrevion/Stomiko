@@ -215,6 +215,42 @@ tg?.BackButton?.onClick(() => back());
 // уходит за пределы приложения, не дав нам ничего сделать.
 history.replaceState({ depth: 1 }, '');
 
+/**
+ * Модальное окно с вопросом.
+ *
+ * Единственный случай, ради которого оно заведено, — необратимое действие.
+ * Отдельный экран тут не годится: к экрану привыкают и проходят его не
+ * читая, а окно перебивает и требует решения здесь.
+ *
+ * «Отмена» стоит СПРАВА — под большим пальцем правой руки, и промах по краю
+ * попадает в неё, а не в необратимое. Касание по подложке тоже отменяет.
+ * Возвращает true только на явное подтверждение.
+ */
+function ask({ title, body, confirm = 'Подтверждаю', cancel = 'Отмена' }) {
+  return new Promise((resolve) => {
+    const scrim = document.createElement('div');
+    scrim.className = 'scrim';
+    scrim.innerHTML = `<div class="modal" role="dialog" aria-modal="true">
+        <h2>${esc(title)}</h2>
+        <div class="note">${body}</div>
+        <div class="modal-actions">
+          <button class="go">${esc(confirm)}</button>
+          <button class="stay">${esc(cancel)}</button>
+        </div>
+      </div>`;
+    const close = (v) => { scrim.remove(); document.removeEventListener('keydown', onKey); resolve(v); };
+    const onKey = (e) => { if (e.key === 'Escape') close(false); };
+    scrim.querySelector('.go').onclick = () => close(true);
+    scrim.querySelector('.stay').onclick = () => close(false);
+    // Промах мимо окна закрывает, а не подтверждает.
+    scrim.onclick = (e) => { if (e.target === scrim) close(false); };
+    document.addEventListener('keydown', onKey);
+    document.body.appendChild(scrim);
+    // Фокус на отмене: случайный Enter не удалит кабинет.
+    setTimeout(() => scrim.querySelector('.stay').focus(), 40);
+  });
+}
+
 const spinner = (t = 'Загрузка…') => render(`<div class="loading">${t}</div>`);
 
 /**
@@ -1506,6 +1542,18 @@ async function docMenu() {
         <button data-act="switcher"><div class="name">Режим</div>
           <div class="price">записаться к врачу как пациент</div></button>
       </div>
+
+      <div class="danger-zone">
+        <div class="sectiontitle">Опасная зона</div>
+        <div class="card">
+          <div class="note" style="margin:0 0 10px">${S.d.me?.staffOf?.find((x) => x.tenantId === S.d.me.tenantId)?.role === 'owner'
+            ? 'Удаление кабинета стирает карты пациентов, историю приёмов, склад и расчёты. Восстановить их будет нечем.'
+            : 'Вы перестанете видеть этот кабинет. Данные кабинета останутся у его владельца.'}</div>
+          <button class="mini danger" data-act="dangerzone">${
+            S.d.me?.staffOf?.find((x) => x.tenantId === S.d.me.tenantId)?.role === 'owner'
+              ? 'Удалить кабинет' : 'Выйти из кабинета'}</button>
+        </div>
+      </div>
     </main>
   `);
 }
@@ -2590,6 +2638,38 @@ document.addEventListener('click', async (e) => {
         if (typeof tg?.requestContact === 'function') tg.requestContact(() => {});
         else tg?.openTelegramLink?.(`https://t.me/${S.d.me?.bot ?? 'stomiko_bot'}?start=phone`);
         return awaitPhone(d.at);
+      }
+      case 'dangerzone': {
+        const scale = await api('/doctor/cabinet/scale');
+        const owner = scale.role === 'owner';
+        const rows = owner ? [
+          ['карточек пациентов', scale.patients],
+          ['закрытых приёмов', scale.visits],
+          ['предстоящих записей', scale.appointments],
+          ['планов лечения', scale.plans],
+          ['записей об оплатах', scale.payments],
+          ['позиций на складе', scale.materials],
+        ].filter(([, n]) => Number(n) > 0) : [];
+        const ok = await ask({
+          title: owner ? 'Удалить кабинет?' : 'Выйти из кабинета?',
+          body: owner
+            // Вопрос без цифр — вопрос ни о чём: человек не помнит, сколько
+            // у него пациентов. Со счётом это уже решение.
+            ? `<b>${esc(scale.name ?? '')}</b> и всё, что в нём:<br>${
+                rows.length ? rows.map(([l, n]) => `${n} ${l}`).join('<br>') : 'кабинет пока пуст'}
+               <br><br>Отменить это будет нечем. Медицинские карты пациентов исчезнут вместе с кабинетом.`
+            : `Вы перестанете видеть <b>${esc(scale.name ?? '')}</b>. Данные останутся у владельца.`,
+          confirm: owner ? 'Да, удалить' : 'Выйти',
+        });
+        if (!ok) return;
+        await api(owner ? '/doctor/cabinet' : '/doctor/cabinet/leave',
+          { method: owner ? 'DELETE' : 'POST' });
+        toast(owner ? 'Кабинет удалён' : 'Вы вышли из кабинета');
+        dropCache(); S.d.cal = null; S.stack = []; S.tab = 0;
+        S.d.me = await api('/me');
+        if (S.d.me.needsChoice) { TABS = []; syncChrome(); return welcome(); }
+        setTabs(S.d.me.mode);
+        return go(TABS[0].fn);
       }
       case 'listing': return go(docListing);
       case 'savelisting': {

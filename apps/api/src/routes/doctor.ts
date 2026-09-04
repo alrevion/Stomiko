@@ -448,6 +448,49 @@ doctor.put('/patients/:id', async (c) => {
   return c.json({ ok: true });
 });
 
+// ── Удаление кабинета ───────────────────────────────────────────────────────
+
+/**
+ * Что исчезнет вместе с кабинетом.
+ *
+ * Отдаётся ДО удаления и показывается в окне подтверждения. «Вы уверены?»
+ * без цифр — вопрос ни о чём: человек не помнит, сколько у него пациентов.
+ */
+doctor.get('/cabinet/scale', async (c) => {
+  const scope = c.get('scope');
+  const scale = await scope.rpc<Record<string, unknown>>('cabinet_scale', {
+    p_tenant_id: scope.tenantId,
+  });
+  const me = c.get('identity').staffOf.find((x) => x.tenantId === scope.tenantId);
+  return c.json({ ...scale, role: me?.role ?? 'staff' });
+});
+
+/** Удаление кабинета. Право проверяет база, а не этот маршрут. */
+doctor.delete('/cabinet', async (c) => {
+  const scope = c.get('scope');
+  try {
+    const res = await scope.rpc<Record<string, unknown>>('delete_own_cabinet', {
+      p_tenant_id: scope.tenantId, p_subject: c.get('identity').subject,
+    });
+    return c.json(res);
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+});
+
+/** Выход сотрудника. Владельцу закрыт — кабинет не остаётся без хозяина. */
+doctor.post('/cabinet/leave', async (c) => {
+  const scope = c.get('scope');
+  try {
+    const res = await scope.rpc<Record<string, unknown>>('leave_cabinet', {
+      p_tenant_id: scope.tenantId, p_subject: c.get('identity').subject,
+    });
+    return c.json(res);
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+});
+
 // ── Показ кабинета в поиске ─────────────────────────────────────────────────
 
 /**

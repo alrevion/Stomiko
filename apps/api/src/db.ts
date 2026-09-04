@@ -280,7 +280,11 @@ export async function resolveIdentity(
   // дверью собственного кабинета. Поэтому погасшее приглашение — не ошибка
   // для того, у кого членство уже есть: просто идём обычным путём.
   if (startParam?.startsWith('inv_')) {
-    const { data } = await sb.rpc('redeem_staff_invite', { p_token: startParam, p_subject: subject });
+    // Ошибку вызова НЕЛЬЗЯ путать с отказом по приглашению. Однажды это уже
+    // стоило времени: нарушение проверки в базе выглядело как «приглашение
+    // недействительно», то есть ошибка кода читалась как испорченная ссылка.
+    const { data, error: rpcError } = await sb.rpc('redeem_staff_invite', { p_token: startParam, p_subject: subject });
+    if (rpcError) throw new Error(`не удалось принять приглашение: ${rpcError.message}`);
     const res = data as { ok: boolean; reason?: string; tenantId?: string; tenantName?: string; publicToken?: string } | null;
     if (!res?.ok && ctx.staffOf.length === 0) {
       throw new Error(res?.reason ?? 'приглашение недействительно');

@@ -855,3 +855,63 @@ td { padding: var(--s2) 0; border-top: 1px solid var(--hair); vertical-align: to
     transition-duration: 1ms !important;
   }
 }
+
+/* ══ Модальное окно ═════════════════════════════════════════════════════
+   Единственное место, где приложение перебивает человека. Заведено ради
+   удаления кабинета: это единственная операция, которую нельзя отменить,
+   и уводить ради неё на отдельный экран — значит дать привыкнуть к пути,
+   по которому ходить нельзя.
+
+   Подложка гасит фон и ловит промахи мимо окна: касание по ней закрывает,
+   а не удаляет. */
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: rgba(0, 0, 0, .45);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  display: flex;
+  align-items: flex-end;
+  animation: scrim-in var(--dur-in) var(--ease);
+}
+@keyframes scrim-in { from { opacity: 0 } to { opacity: 1 } }
+
+.modal {
+  width: 100%;
+  /* Окно поднимается над невидимой частью вебвью тем же способом, что и
+     всё закреплённое у низа: иначе кнопки уедут под нижнюю кромку листа. */
+  margin-bottom: calc(var(--below) + var(--safe-b));
+  padding: var(--s4) var(--s4) var(--s3);
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  background: var(--surface);
+  box-shadow: var(--shadow-3);
+  animation: modal-in var(--dur-in) var(--ease);
+}
+@keyframes modal-in { from { transform: translateY(16px) } to { transform: none } }
+
+.modal h2 { margin: 0 0 var(--s2); font-size: 20px; font-weight: 700; letter-spacing: -.2px; }
+.modal .note { margin: 0 0 var(--s3); }
+
+/* Ряд решений. Отмена стоит СПРАВА — под большим пальцем правой руки, и
+   промах по краю попадает в неё, а не в необратимое. */
+.modal-actions { display: flex; gap: var(--s2); }
+.modal-actions button {
+  flex: 1;
+  min-height: 50px;
+  border: 0;
+  border-radius: var(--r);
+  font-size: 17px;
+  font-weight: 650;
+  transition: transform var(--dur-press) var(--ease);
+}
+.modal-actions button:active { transform: scale(.975); }
+.modal-actions .go { background: var(--bad); color: #fff; }
+.modal-actions .stay { background: var(--surface-3); color: var(--label); }
+
+/* ══ Опасная зона ═══════════════════════════════════════════════════════
+   Отделена от остальных пунктов пустотой в целый блок: сюда не должен
+   попадать палец, целившийся в «Подписку». */
+.danger-zone { margin-top: calc(var(--s5) * 2); }
+.danger-zone .sectiontitle { color: var(--bad); }
+.danger-zone .mini { width: 100%; min-height: 48px; }
