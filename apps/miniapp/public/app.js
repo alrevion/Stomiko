@@ -13,6 +13,8 @@
  * себестоимости.
  */
 
+import { TEETH_SPRITE } from './teeth.js';
+
 const tg = window.Telegram?.WebApp;
 tg?.ready();
 tg?.expand();
@@ -2598,13 +2600,15 @@ function patPlan(planId) {
 }
 
 /* ── Зубная карта ──────────────────────────────────────────────────────
-   Зуб здесь — данные, а не картинка: номер по FDI, тип и состояние. Форма
-   считается из номера, силуэтов всего четыре, половины зеркальны. Поэтому
-   карту можно перекрасить по состоянию и нельзя «забыть обновить файл».
+   Зубы — настоящие анатомические рисунки, а не силуэты из четырёх кривых:
+   врач узнаёт моляр по трём корням, а не по подписи. Набор взят готовым
+   (React Advanced Odontogram, Zoltán Dul, MIT) — исходники и лицензия лежат
+   в vendor/teeth, спрайт собирается scripts/build-teeth.mjs.
 
-   Дуги повёрнуты друг к другу передними зубами — так их рисуют в карте и
-   так они стоят во рту. Ряд из шестнадцати зубов в строку на телефоне даёт
-   цель касания в 22px; дуга использует высоту и оставляет 33px. */
+   Раскладка рядами, как в любой зубной карте: коронки, жевательные
+   поверхности, снова поверхности, коронки. Дугу пробовал — с настоящими
+   рисунками она врёт: повёрнутый на семьдесят градусов моляр не читается
+   как моляр. */
 
 const FDI = {
   upper: [18, 17, 16, 15, 14, 13, 12, 11, 21, 22, 23, 24, 25, 26, 27, 28],
@@ -2623,85 +2627,69 @@ function toothKind(n) {
   return pos <= 5 ? 'premolar' : 'molar';
 }
 
-// Коронка снизу, корни сверху; ширина и число корней — от типа.
-const SHAPE = {
-  incisor:  { cw: 30, roots: [[30, 7, 12]] },
-  canine:   { cw: 30, roots: [[30, 8, 2]] },
-  premolar: { cw: 38, roots: [[30, 9, 14]] },
-  molar:    { cw: 48, roots: [[19, 8, 14], [41, 8, 14]] },
-};
+/** Жевательная поверхность есть у премоляров и моляров; у резцов её не рисуют. */
+const hasOcclusal = (n) => ['premolar', 'molar'].includes(toothKind(n));
 
-function toothShape(kind) {
-  const { cw, roots } = SHAPE[kind];
-  const a = 30 - cw / 2, b = 30 + cw / 2;
-  const crown = `M${a} 48 Q30 41 ${b} 48 L${b - 2} 76 Q30 93 ${a + 2} 76 Z`;
-  return `${roots.map(([cx, w, top]) =>
-    `<path class="root" d="M${cx - w} 52 C${cx - w} ${top + 16} ${cx - w * 0.5} ${top} ${cx} ${top}`
-    + ` C${cx + w * 0.5} ${top} ${cx + w} ${top + 16} ${cx + w} 52 Z"/>`).join('')}`
-    + `<path class="crown" d="${crown}"/>`;
+// Спрайт кладём в документ один раз: тридцать два зуба ссылаются на двенадцать
+// силуэтов, а не тащат за собой по сто пятьдесят кривых каждый.
+let spriteIn = false;
+function ensureSprite() {
+  if (spriteIn) return;
+  const box = document.createElement('div');
+  box.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden';
+  box.innerHTML = TEETH_SPRITE;
+  document.body.appendChild(box);
+  spriteIn = true;
 }
 
-// Ширина места под зуб в местных единицах — с зазором, чтобы соседи не
-// налезали друг на друга.
-const TOOTH_W = { incisor: 34, canine: 34, premolar: 42, molar: 52 };
+const W = 40;      // ширина места под зуб
+const CROWN = 72;  // высота коронки с корнем
+// Жевательная поверхность шире, чем выше (48×41 в исходнике). Ставим её в
+// клетку по этой пропорции: в квадратной коробке она висела бы посередине,
+// оторванная от своей же коронки.
+const OCCL = 28;
+const PAD = 15;    // поле под номера сверху и снизу
+
+/** Поставить силуэт в клетку, при надобности отзеркалив. */
+const place = (sym, x, y, w, h, mx = 1, my = 1) =>
+  `<use href="#${sym}" width="${w}" height="${h}" transform="translate(${
+    (x + (mx < 0 ? w : 0)).toFixed(1)} ${(y + (my < 0 ? h : 0)).toFixed(1)}) scale(${mx} ${my})"/>`;
 
 /**
- * Раскладка по дуге ПО ДЛИНЕ, а не по углу.
+ * Один ряд челюсти.
  *
- * Равные углы кажутся очевидным решением и дают кривой ряд: у эллипса шаг
- * по дуге разный, и моляры наезжают друг на друга, пока у резцов пусто.
- * Считаем длину численно и раздаём её зубам по их ширине — тогда ряд
- * сходится сам, а масштаб получается из дуги, а не подбирается на глаз.
+ * `up` — верхняя челюсть: коронки корнями вверх, жевательная поверхность под
+ * ними. У нижней всё зеркально по вертикали, чтобы ряды смотрели друг на
+ * друга, как во рту.
+ *
+ * Половины зеркалим по горизонтали: рисунок один, а зубы слева и справа —
+ * отражения. Так делает и сам набор, иначе пришлось бы держать 32 файла.
  */
-function archPlaces(numbers, rx, ry, spanDeg) {
-  const STEPS = 360;
-  const pts = []; const len = [0];
-  for (let i = 0; i <= STEPS; i += 1) {
-    const a = ((-spanDeg + (2 * spanDeg * i) / STEPS) * Math.PI) / 180;
-    pts.push([rx * Math.sin(a), ry * Math.cos(a), a]);
-    if (i) len.push(len[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
-  }
-  const widths = numbers.map((t) => TOOTH_W[toothKind(t)]);
-  const total = widths.reduce((x, w) => x + w, 0);
-  const scale = len[STEPS] / total;
-
-  let acc = 0;
+function jawRow(numbers, { up, marks, selected, milk, top }) {
+  const half = numbers.length / 2;
   return numbers.map((t, i) => {
-    const target = (acc + widths[i] / 2) * scale;
-    acc += widths[i];
-    let k = len.findIndex((v) => v >= target);
-    if (k < 0) k = STEPS;
-    const [x, y, a] = pts[k];
-    return { t, x, y, rad: a, deg: (a * 180) / Math.PI, scale: scale * 0.98 };
-  });
-}
+    const x = i * W;
+    const mirror = i >= half ? -1 : 1;
+    const pre = milk ? 't-milk-' : 't-';
+    const kind = toothKind(t);
+    const crownY = up ? top : top + OCCL + 4;
+    const occlY = up ? top + CROWN + 4 : top;
 
-/**
- * Одна челюсть.
- *
- * Центр дуги лежит внутри рта: верхний ряд висит под своим центром, нижний
- * стоит над своим, и передние зубы двух рядов встречаются посередине — как
- * во рту. Номера уходят внутрь: снаружи им не хватает поля, а между
- * челюстями всё равно пусто.
- */
-function jaw(numbers, { flip, cy, rx, ry, marks, selected }) {
-  const dir = flip ? -1 : 1;
-  return archPlaces(numbers, rx, ry, 84).map(({ t, x, y, rad, deg, scale }) => {
-    const px = 170 + x;
-    const py = cy + dir * y;
-    const cls = `tooth${marks[t] ? ' done' : ''}${
-      selected.includes(String(t)) ? ' on' : ''}`;
-    const label = marks[t]
-      ? `зуб ${t}, ${marks[t]} ${plural(marks[t], 'запись', 'записи', 'записей')}`
+    const on = selected.includes(String(t));
+    const done = marks[t];
+    const label = done
+      ? `зуб ${t}, ${done} ${plural(done, 'запись', 'записи', 'записей')}`
       : `зуб ${t}, записей нет`;
-    return `<g class="${cls}" data-tooth="${t}" role="button" tabindex="0" aria-label="${label}">
-      <g transform="translate(${px.toFixed(1)} ${py.toFixed(1)}) rotate(${(deg * 0.85 * dir).toFixed(1)})
-         scale(${scale.toFixed(3)} ${(dir * scale).toFixed(3)}) translate(-30 -74)">
-        ${toothShape(toothKind(t))}
-        <rect class="hit" x="-3" y="-6" width="66" height="116"/>
-      </g>
-      <text class="num" x="${(px - 31 * Math.sin(rad)).toFixed(1)}"
-        y="${(py - dir * 31 * Math.cos(rad) + 4).toFixed(1)}">${t}</text>
+
+    return `<g class="tooth${done ? ' done' : ''}${on ? ' on' : ''}"
+      data-tooth="${t}" role="button" tabindex="0" aria-label="${label}">
+      <rect class="cell" x="${x + 1}" y="${top - (up ? PAD - 2 : 4)}" width="${W - 2}"
+        height="${CROWN + OCCL + PAD + 6}" rx="7"/>
+      ${place(`${pre}${kind}`, x + 3, crownY, W - 6, CROWN, mirror, up ? 1 : -1)}
+      ${hasOcclusal(t)
+        ? place(`${pre}occl-${kind}`, x + 3, occlY, W - 6, OCCL, mirror, up ? 1 : -1)
+        : ''}
+      <text class="num" x="${x + W / 2}" y="${up ? top - 5 : top + OCCL + CROWN + 16}">${t}</text>
     </g>`;
   }).join('');
 }
@@ -2713,28 +2701,39 @@ function jaw(numbers, { flip, cy, rx, ry, marks, selected }) {
  * а не «здесь болит»: карта собирается из истории, а не из диагнозов,
  * которых мы не ведём.
  *
- * Цель касания у переднего зуба выходит около 22px — меньше тех 30px,
- * которые требует проверка экранов. Увеличить нельзя: тридцать два зуба в
- * дугу на ширине телефона больше не помещаются. Поэтому выбранный зуб
- * называется словом под картой и подтверждается отдельной кнопкой:
- * промах видно до того, как он что-то значит.
+ * Отметка — подложка под зубом, а не перекраска самого зуба: рисунок залит
+ * градиентами, и перекрасить его значит потерять и корень, и пульпу.
  */
 function toothChart({ marks = {}, selected = [], milk = false }) {
+  ensureSprite();
   const up = milk ? FDI.upperMilk : FDI.upper;
   const low = milk ? FDI.lowerMilk : FDI.lower;
-  const rx = milk ? 108 : 132;
-  const ry = milk ? 84 : 100;
-  return `<svg class="chart" viewBox="0 0 340 350" role="group" aria-label="Зубная карта">
-    ${jaw(up, { flip: false, cy: 58, rx, ry, marks, selected })}
-    ${jaw(low, { flip: true, cy: 292, rx, ry, marks, selected })}
+  const width = up.length * W;
+  const topRow = PAD;
+  const botRow = PAD + CROWN + OCCL + 18;
+  const height = botRow + CROWN + OCCL + PAD + 10;
+
+  return `<svg class="chart" viewBox="0 0 ${width} ${height}" role="group" aria-label="Зубная карта">
+    <line class="midline" x1="${width / 2}" y1="2" x2="${width / 2}" y2="${height - 2}"/>
+    <g>${jawRow(up, { up: true, marks, selected, milk, top: topRow })}</g>
+    <g>${jawRow(low, { up: false, marks, selected, milk, top: botRow })}</g>
   </svg>`;
 }
 
 /** Карточка с картой: легенда и переключатель молочных. */
-function chartCard({ marks = {}, selected = [], milk = false, note = '' }) {
+/**
+ * Карточка с картой.
+ *
+ * `wide` разводит два разных дела. Смотреть карту — значит видеть весь рот
+ * сразу, и она вписывается в ширину: зуб выходит около 21px, но по нему и не
+ * целятся. Выбирать зуб — значит попадать, и там карта шире экрана и
+ * прокручивается вбок: 35px на зуб. Тридцать два зуба в ширину телефона с
+ * запасом на промах не помещаются, и делать вид, что помещаются, хуже.
+ */
+function chartCard({ marks = {}, selected = [], milk = false, note = '', wide = false }) {
   const hasMilk = Object.keys(marks).some(isMilkTooth);
   return `<div class="card">
-    ${toothChart({ marks, selected, milk })}
+    <div class="chart-wrap${wide ? ' wide' : ''}">${toothChart({ marks, selected, milk })}</div>
     <div class="chart-legend">
       <span class="done"><i></i>лечили</span>
       <span class="sel"><i></i>выбран</span>
@@ -2771,7 +2770,7 @@ function drawToothPick() {
       ${p.sub ? `<span class="sub">${esc(p.sub)}</span>` : ''}</header>
     <main>
       ${chartCard({
-        marks: p.marks, selected: p.value, milk: p.milk,
+        marks: p.marks, selected: p.value, milk: p.milk, wide: true,
         note: p.many
           ? 'Лечили несколько зубов — отметьте все. Услуга внесётся один раз, а в карте появится запись по каждому зубу.'
           : '',
