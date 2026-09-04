@@ -913,5 +913,8 @@ td { padding: var(--s2) 0; border-top: 1px solid var(--hair); vertical-align: to
    Отделена от остальных пунктов пустотой в целый блок: сюда не должен
    попадать палец, целившийся в «Подписку». */
 .danger-zone { margin-top: calc(var(--s5) * 2); }
+/* Без полоски слева: она у .note означает «сноска, пояснение к соседнему»,
+   а здесь текст сам по себе и ни к чему не примыкает. */
+.danger-zone .note { padding-left: 0; border-left: 0; }
 .danger-zone .sectiontitle { color: var(--bad); }
 .danger-zone .mini { width: 100%; min-height: 48px; }
