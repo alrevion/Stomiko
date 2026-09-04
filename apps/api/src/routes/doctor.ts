@@ -475,21 +475,22 @@ doctor.post('/record/:entryId/amend', async (c) => {
 });
 
 /**
- * Зуб у оказанной услуги.
+ * Зубы у оказанной услуги.
  *
- * Отдельным маршрутом: зуб чаще уточняют уже после того, как услугу внесли —
- * врач сначала записывает, что сделал, и только потом смотрит, на каком зубе.
+ * Отдельным маршрутом: зубы чаще уточняют уже после того, как услугу внесли —
+ * врач сначала записывает, что сделал, и только потом смотрит, на каких зубах.
  * Правило «пока приём открыт» держит функция БД.
  */
-doctor.put('/visit-services/:id/tooth', async (c) => {
-  const b = await c.req.json<{ tooth?: string | null }>().catch(() => ({} as { tooth?: string }));
+doctor.put('/visit-services/:id/teeth', async (c) => {
+  const b = await c.req.json<{ teeth?: string[] }>().catch(() => ({} as { teeth?: string[] }));
+  const list = [...new Set((b.teeth ?? []).map((x) => String(x).trim()).filter(Boolean))];
   try {
-    const res = await c.get('scope').rpc<Record<string, unknown>>('set_visit_service_tooth', {
-      p_visit_service_id: c.req.param('id'), p_tooth: b.tooth ?? null,
+    const res = await c.get('scope').rpc<Record<string, unknown>>('set_visit_service_teeth', {
+      p_visit_service_id: c.req.param('id'), p_teeth: list,
     });
     return c.json(res);
   } catch (err) {
-    return c.json({ error: (err as Error).message.replace(/^set_visit_service_tooth: /, '') }, 400);
+    return c.json({ error: (err as Error).message.replace(/^set_visit_service_teeth: /, '') }, 400);
   }
 });
 

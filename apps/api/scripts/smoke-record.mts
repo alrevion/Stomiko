@@ -75,28 +75,39 @@ const w=await docA('/doctor/walk-in',{method:'POST',body:JSON.stringify({name:'�
 ok(w.status===200,'приём без записи открыт тому же пациенту',String(w.body.error??''));
 const vid=w.body.visitId as string;
 const bad=await docA(`/doctor/visits/${vid}/services`,{method:'POST',
-  body:JSON.stringify({serviceId:filling.id,quantity:1,tooth:'99'})});
+  body:JSON.stringify({serviceId:filling.id,quantity:1,teeth:['99']})});
 ok(bad.status===400,'зуб не по FDI отклонён',`${bad.status}`);
+// ДВА зуба одной услугой: врач вносит один раз, а не дважды.
 const added=await docA(`/doctor/visits/${vid}/services`,{method:'POST',
-  body:JSON.stringify({serviceId:filling.id,quantity:1,tooth:'36'})});
-ok(added.status===200,'услуга внесена с зубом 36',String(added.body.error??''));
+  body:JSON.stringify({serviceId:filling.id,quantity:2,teeth:['36','26','36']})});
+ok(added.status===200,'услуга на два зуба внесена одной строкой',String(added.body.error??''));
 
 const closed2=await docA(`/doctor/visits/${vid}/close`,{method:'POST'});
 ok(closed2.status===200,'приём закрыт',String(closed2.body.error??''));
-const { data: teeth } = await sb.from('clinical_entries').select('tooth, service_name, visit_id')
+const { data: teeth } = await sb.from('clinical_entries').select('tooth, quantity, service_name, visit_id')
   .eq('person_subject',`tg:${PAT}`).eq('visit_id',vid);
-ok((teeth??[]).length===1,'запечатана одна запись',`${(teeth??[]).length}`);
-ok((teeth??[])[0]?.tooth==='36','В ИСТОРИЮ УШЁЛ ЗУБ 36, а не первый пункт плана',
-   String((teeth??[])[0]?.tooth));
+ok((teeth??[]).length===2,'одна строка услуги — ДВЕ записи в карте, по зубу на каждую',
+   `${(teeth??[]).length}`);
+ok((teeth??[]).map(x=>x.tooth).sort().join(',')==='26,36','в истории оба зуба',
+   (teeth??[]).map(x=>x.tooth).join(','));
+ok((teeth??[]).every(x=>x.quantity===1),'количество разложено по зубам, а не удвоено');
 const { data: items } = await sb.from('treatment_plan_items').select('tooth, status')
   .in('id',(await sb.from('treatment_plan_items').select('id').eq('plan_id',plan.body.planId)).data!.map(x=>x.id));
-const done36=(items??[]).find(i=>i.tooth==='36');
-const open26=(items??[]).find(i=>i.tooth==='26');
-ok(done36?.status==='done','закрыт пункт про 36');
-ok(open26?.status==='planned','пункт про 26 остался запланированным — чужой зуб не трогаем',
-   String(open26?.status));
-const svcTooth=(await sb.from('visit_services').select('tooth').eq('visit_id',vid).single()).data;
-ok(svcTooth?.tooth==='36','зуб хранится у самой услуги');
+ok((items??[]).every(i=>i.status==='done'),'оба пункта плана закрыты одной строкой услуги',
+   (items??[]).map(i=>`${i.tooth}:${i.status}`).join(' '));
+const svcTeeth=(await sb.from('visit_services').select('teeth, quantity').eq('visit_id',vid).single()).data;
+ok((svcTeeth?.teeth??[]).length===2,'у услуги два зуба, а строка одна',
+   JSON.stringify(svcTeeth?.teeth));
+ok(!(svcTeeth?.teeth??[]).includes('99'),'повтор и мусор в списке зубов не сохранились');
+
+// Повторное закрытие не должно плодить дубли: частичный уникальный индекс
+// с nulls not distinct и тем же предикатом в on conflict. На этом я уже
+// спотыкался в 067, поэтому проверяю, а не надеюсь.
+await sb.from('visits').update({status:'open'}).eq('id',vid);
+await sb.from('visits').update({status:'closed'}).eq('id',vid);
+const { count: again } = await sb.from('clinical_entries')
+  .select('*',{count:'exact',head:true}).eq('visit_id',vid);
+ok((again??0)===2,'повторное закрытие приёма не создало дублей',`${again}`);
 
 console.log('\n── Врач: доступ живёт ровно от записи до закрытия приёма ──');
 // Приём УЖЕ закрыт, и права у врача больше нет — таково правило: карта
@@ -106,7 +117,7 @@ const recAafter=await docA(`/doctor/patients/${patientId}/record`);
 ok(recAafter.status===403,'после закрытия приёма карта закрылась и для лечившего врача',
    `${recAafter.status}`);
 const scaleA=await docA('/doctor/cabinet/scale');
-ok(Number(scaleA.body.records)===2,'кабинет знает, сколько записей переживёт его удаление',
+ok(Number(scaleA.body.records)===3,'кабинет знает, сколько записей переживёт его удаление',
    JSON.stringify(scaleA.body.records));
 
 console.log('\n── Второй кабинет видит историю, но не всегда ──');
@@ -122,7 +133,7 @@ ok(booked2.status===200,'пациент записался во второй к�
 const after=await sb.rpc('doctor_may_see_person',{p_tenant_id:tB,p_subject:`tg:${PAT}`});
 ok(after.data===true,'ПОСЛЕ ЗАПИСИ доступ открылся — врач готовится заранее');
 const rec=await sb.rpc('person_record_for_doctor',{p_tenant_id:tB,p_subject:`tg:${PAT}`,p_actor:`tg:${B}`});
-ok(!rec.error && (rec.data as any[]).length===2,'второй врач видит лечение первого',String(rec.error?.message??''));
+ok(!rec.error && (rec.data as any[]).length===3,'второй врач видит лечение первого',String(rec.error?.message??''));
 ok((rec.data as any[])[0].cabinet==='Первый Кабинет','видно, где лечили');
 
 console.log('\n── Исправление дополнением ──');
@@ -132,7 +143,7 @@ ok(empty.status===400,'пустое дополнение отклонено',Str
 const am=await docB(`/doctor/record/${entry}/amend`,{method:'POST',body:JSON.stringify({note:'Зуб 26, а не 27'})});
 ok(am.status===200,'дополнение добавлено',String(am.body.error??''));
 const { data: all } = await sb.from('clinical_entries').select('id, amends, note').eq('person_subject',`tg:${PAT}`);
-ok((all??[]).length===3,'дополнение добавилось, исходные целы',`${(all??[]).length}`);
+ok((all??[]).length===4,'дополнение добавилось, исходные целы',`${(all??[]).length}`);
 ok((all??[]).some(e=>e.amends===entry),'дополнение ссылается на исходную');
 const orig=(all??[]).find(e=>e.id===entry);
 ok(orig!=null && orig.note==null,'исходная запись НЕ переписана');
@@ -144,7 +155,7 @@ ok((logged??0)>=2,'обращения к истории записаны',`${log
 
 console.log('\n── Доступ закрывается вместе с записью ──');
 const recB=await docB(`/doctor/patients/${booked2.body.patientId}/record`);
-ok(recB.status===200 && (recB.body.entries??[]).length===3,'пока пациент записан — карта открыта',
+ok(recB.status===200 && (recB.body.entries??[]).length===4,'пока пациент записан — карта открыта',
    `${recB.status} ${(recB.body.entries??[]).length}`);
 const cancelled=await pat2(`/me/appointments/${booked2.body.appointmentId}/cancel`,{method:'POST'});
 ok(cancelled.status===200,'пациент отменил запись',String(cancelled.body.error??''));
@@ -159,11 +170,11 @@ ok(killed.status===200,'первый кабинет удалён',String(killed.
 // Без start_param: у человека больше нет кабинета, из которого он пришёл, —
 // и карта всё равно должна открыться. Это и есть «карта принадлежит вам».
 const stillMine=await as(PAT)('/me/record');
-ok((stillMine.body.entries??[]).length===3,'пациент по-прежнему открывает свою карту',
+ok((stillMine.body.entries??[]).length===4,'пациент по-прежнему открывает свою карту',
    `${(stillMine.body.entries??[]).length}`);
 ok((stillMine.body.entries??[]).every((e:any)=>e.cabinet),'в карте осталось имя закрытого кабинета');
 const { data: survived } = await sb.from('clinical_entries').select('*').eq('person_subject',`tg:${PAT}`);
-ok((survived??[]).length===3,'записи целы после удаления кабинета',`${(survived??[]).length}`);
+ok((survived??[]).length===4,'записи целы после удаления кабинета',`${(survived??[]).length}`);
 const first=(survived??[]).find(e=>e.id===entry)!;
 ok(first.author_tenant_id===null,'ссылка на кабинет обнулена');
 ok(first.author_cabinet==='Первый Кабинет','НО имя кабинета осталось — запись читаема');

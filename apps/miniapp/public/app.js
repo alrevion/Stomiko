@@ -1062,7 +1062,9 @@ async function docVisit(visitId) {
         ${v.services.map((s) => `<div class="service-line">
           <span>${esc(s.name)}${s.quantity > 1 ? ` × ${s.quantity}` : ''}
             <button class="mini tooth-chip" data-vsvc="${s.id}">${
-              s.tooth ? `зуб ${esc(s.tooth)}` : '+ зуб'}</button></span>
+              (s.teeth ?? []).length
+                ? `${(s.teeth ?? []).length > 1 ? 'зубы' : 'зуб'} ${esc((s.teeth ?? []).join(', '))}`
+                : '+ зуб'}</button></span>
           <span class="mono">${money(s.price)}</span></div>`).join('')}
         <div class="row" style="margin-top:8px"><span class="muted">Выручка</span><span class="mono name">${money(v.revenue)}</span></div>
       </div>` : '<div class="sectiontitle">Что делали</div>'}
@@ -1075,6 +1077,24 @@ async function docVisit(visitId) {
     </main>
     ${v.services.length ? '<button class="primary" data-act="close">Готово</button>' : ''}
   `);
+}
+
+/**
+ * Внести оказанную услугу и вернуться к приёму.
+ *
+ * Одна функция на все три пути (без зуба, один зуб, несколько): раньше
+ * каждый путь сам считал, сколько экранов снять со стека, — и ошибиться
+ * там было проще, чем заметить.
+ */
+async function addVisitService(service, quantity, teeth) {
+  await api(`/doctor/visits/${S.d.visitId}/services`, {
+    method: 'POST',
+    body: JSON.stringify({ serviceId: service.id, quantity: Math.max(1, quantity), teeth }),
+  });
+  // Снимаем со стека всё, что открывали ради этой услуги, и возвращаемся
+  // к приёму: количество и карта зубов позади, шага «назад» к ним нет.
+  while (S.stack.length > 1 && S.stack[S.stack.length - 1][0] !== docVisit) S.stack.pop();
+  return docVisit(S.d.visitId);
 }
 
 function docQuantity(service) {
@@ -1116,7 +1136,7 @@ async function docBreakdown(visitId, known) {
     <main>
       ${v.services?.length ? `<div class="card">
         ${v.services.map((s) => `<div class="service-line"><span>${esc(s.name)}${
-          s.tooth ? ` · зуб ${esc(s.tooth)}` : ''}${
+          (s.teeth ?? []).length ? ` · ${(s.teeth ?? []).length > 1 ? 'зубы' : 'зуб'} ${esc((s.teeth ?? []).join(', '))}` : ''}${
           s.quantity > 1 ? ` × ${s.quantity}` : ''}</span><span class="mono">${money(s.price)}</span></div>`).join('')}
       </div>` : ''}
       <div class="card">
@@ -1398,7 +1418,7 @@ function drawDocRecord() {
       ${noTelegram ? `<div class="card"><div class="note" style="margin:0">
         У этого пациента нет Telegram, значит нет и своей карты.</div></div>` : ''}
       ${roots.length ? `${chartCard({
-        marks: toothMarks(entries), selected: tooth, milk: S.d.recMilk,
+        marks: toothMarks(entries), selected: tooth ? [tooth] : [], milk: S.d.recMilk,
         note: 'Закрашенный зуб уже лечили. Нажмите — останутся записи только по нему.',
       })}
       ${tooth ? `<div class="card ok"><div class="row">
@@ -2669,7 +2689,8 @@ function jaw(numbers, { flip, cy, rx, ry, marks, selected }) {
   return archPlaces(numbers, rx, ry, 84).map(({ t, x, y, rad, deg, scale }) => {
     const px = 170 + x;
     const py = cy + dir * y;
-    const cls = `tooth${marks[t] ? ' done' : ''}${String(selected) === String(t) ? ' on' : ''}`;
+    const cls = `tooth${marks[t] ? ' done' : ''}${
+      selected.includes(String(t)) ? ' on' : ''}`;
     const label = marks[t]
       ? `зуб ${t}, ${marks[t]} ${plural(marks[t], 'запись', 'записи', 'записей')}`
       : `зуб ${t}, записей нет`;
@@ -2698,7 +2719,7 @@ function jaw(numbers, { flip, cy, rx, ry, marks, selected }) {
  * называется словом под картой и подтверждается отдельной кнопкой:
  * промах видно до того, как он что-то значит.
  */
-function toothChart({ marks = {}, selected = null, milk = false }) {
+function toothChart({ marks = {}, selected = [], milk = false }) {
   const up = milk ? FDI.upperMilk : FDI.upper;
   const low = milk ? FDI.lowerMilk : FDI.lower;
   const rx = milk ? 108 : 132;
@@ -2710,7 +2731,7 @@ function toothChart({ marks = {}, selected = null, milk = false }) {
 }
 
 /** Карточка с картой: легенда и переключатель молочных. */
-function chartCard({ marks = {}, selected = null, milk = false, note = '' }) {
+function chartCard({ marks = {}, selected = [], milk = false, note = '' }) {
   const hasMilk = Object.keys(marks).some(isMilkTooth);
   return `<div class="card">
     ${toothChart({ marks, selected, milk })}
@@ -2737,25 +2758,34 @@ const toothMarks = (entries) => entries.reduce((m, e) => (
  * выбранный зуб ещё и назван словом внизу.
  */
 function toothPick(cfg) {
-  S.d.pick = { milk: false, value: null, marks: {}, ...cfg };
+  S.d.pick = { milk: false, value: [], marks: {}, many: false, ...cfg };
+  S.d.pick.value = (S.d.pick.value ?? []).map(String);
   drawToothPick();
 }
 
 function drawToothPick() {
   const p = S.d.pick;
-  render(`
+  const n = p.value.length;
+  return render(`
     <header><h1>${esc(p.title ?? 'Какой зуб')}</h1>
       ${p.sub ? `<span class="sub">${esc(p.sub)}</span>` : ''}</header>
     <main>
-      ${chartCard({ marks: p.marks, selected: p.value, milk: p.milk })}
+      ${chartCard({
+        marks: p.marks, selected: p.value, milk: p.milk,
+        note: p.many
+          ? 'Лечили несколько зубов — отметьте все. Услуга внесётся один раз, а в карте появится запись по каждому зубу.'
+          : '',
+      })}
       <div class="card">
-        <div class="row"><span class="muted">Выбран</span>
-          <span class="mono name">${p.value ? `зуб ${p.value}` : 'ничего'}</span></div>
-        ${p.value ? '<button class="mini" data-act="notooth">Убрать зуб</button>' : ''}
+        <div class="row"><span class="muted">${n > 1 ? 'Выбраны' : 'Выбран'}</span>
+          <span class="mono name">${n ? `${n > 1 ? 'зубы ' : 'зуб '}${p.value.join(', ')}` : 'ничего'}</span></div>
+        ${n ? '<button class="mini" data-act="notooth">Снять выбор</button>' : ''}
       </div>
     </main>
-    <button class="primary" data-act="picktooth"${p.value ? '' : ' disabled'}>${
-      p.value ? `Это зуб ${p.value}` : 'Выберите зуб на карте'}</button>
+    <button class="primary" data-act="picktooth"${n ? '' : ' disabled'}>${
+      n === 0 ? 'Выберите зуб на карте'
+      : n === 1 ? `Это зуб ${p.value[0]}`
+      : `Это ${n} ${plural(n, 'зуб', 'зуба', 'зубов')}: ${p.value.join(', ')}`}</button>
   `);
 }
 
@@ -2836,7 +2866,7 @@ function drawPatRecord() {
       : 'пока пусто'}</span></header>
     <main>
       ${roots.length ? `${chartCard({
-        marks: toothMarks(entries), selected: tooth, milk: S.d.recMilk,
+        marks: toothMarks(entries), selected: tooth ? [tooth] : [], milk: S.d.recMilk,
         note: 'Закрашен зуб, который лечили. Нажмите на него — останутся только его записи.',
       })}
       ${tooth ? `<div class="card ok"><div class="row">
@@ -2955,7 +2985,12 @@ document.addEventListener('click', async (e) => {
     if (d.tooth) {
       const top = S.stack[S.stack.length - 1]?.[0];
       if (top === toothPick) {
-        S.d.pick.value = S.d.pick.value === d.tooth ? null : d.tooth;
+        const p = S.d.pick;
+        p.value = p.value.includes(d.tooth)
+          ? p.value.filter((x) => x !== d.tooth)
+          // Одиночный выбор заменяет, множественный копит. Порядок номеров —
+          // как во рту, а не как нажимали: карту читают, а не вспоминают.
+          : (p.many ? [...p.value, d.tooth].sort() : [d.tooth]);
         return drawToothPick();
       }
       S.d.recTooth = S.d.recTooth === d.tooth ? null : d.tooth;
@@ -2966,17 +3001,19 @@ document.addEventListener('click', async (e) => {
       const idx = Number(d.toothitem);
       const item = S.d.tplan.items[idx];
       return go(toothPick, {
-        title: 'Какой зуб', sub: item.service, value: item.tooth || null,
-        onPick: (tooth) => { S.d.tplan.items[idx].tooth = tooth ?? ''; back(); },
+        // В плане у каждой позиции своя цена, поэтому и зуб один: две пломбы
+        // это две строки плана, а не одна с двумя номерами.
+        title: 'Какой зуб', sub: item.service, value: item.tooth ? [item.tooth] : [],
+        onPick: (teeth) => { S.d.tplan.items[idx].tooth = teeth[0] ?? ''; back(); },
       });
     }
     if (d.vsvc) {
       const svc = (S.d.visit?.services ?? []).find((x) => x.id === d.vsvc);
       return go(toothPick, {
-        title: 'Какой зуб', sub: svc?.name ?? '', value: svc?.tooth || null,
-        onPick: async (tooth) => {
-          await api(`/doctor/visit-services/${d.vsvc}/tooth`,
-            { method: 'PUT', body: JSON.stringify({ tooth }) });
+        title: 'Какие зубы', sub: svc?.name ?? '', value: svc?.teeth ?? [], many: true,
+        onPick: async (teeth) => {
+          await api(`/doctor/visit-services/${d.vsvc}/teeth`,
+            { method: 'PUT', body: JSON.stringify({ teeth }) });
           S.stack.pop();
           return docVisit(S.d.visitId);
         },
@@ -3024,6 +3061,16 @@ document.addEventListener('click', async (e) => {
           method: 'POST', body: JSON.stringify({ serviceId: svc.id, quantity: 1 }),
         });
         return docVisit(S.d.visitId);
+      }
+      // Услуга «за зуб» идёт сразу на карту: количество тут и есть число
+      // отмеченных зубов, и спрашивать его отдельным экраном — значит
+      // спросить одно и то же дважды.
+      if (svc.unit_of_norm === 'tooth') {
+        S.d.picked = svc;
+        return go(toothPick, {
+          title: 'Какие зубы', sub: svc.name_ru, many: true,
+          onPick: (teeth) => addVisitService(svc, teeth.length, teeth),
+        });
       }
       return go(docQuantity, svc);
     }
@@ -3196,10 +3243,10 @@ document.addEventListener('click', async (e) => {
         S.d.recMilk = !!d.on;
         return top === docRecord ? drawDocRecord() : drawPatRecord();
       }
-      case 'notooth': S.d.pick.value = null; return drawToothPick();
+      case 'notooth': S.d.pick.value = []; return drawToothPick();
       case 'picktooth': {
         const { value, onPick } = S.d.pick;
-        if (!value) return toast('Выберите зуб на карте', true);
+        if (!value.length) return toast('Выберите зуб на карте', true);
         return onPick(value);
       }
       case 'saveamend': {
@@ -3441,22 +3488,16 @@ document.addEventListener('click', async (e) => {
         return back();
       }
       case 'addservice': {
-        // Зуб спрашиваем только там, где он есть: у осмотра и снятия налёта
-        // зуба нет, и лишний экран между «нажал» и «добавлено» — это шаг,
-        // который врач будет проматывать вслепую.
-        const perTooth = ['tooth', 'canal', 'surface'].includes(S.d.picked.unit_of_norm);
-        const add = async (tooth) => {
-          await api(`/doctor/visits/${S.d.visitId}/services`, {
-            method: 'POST',
-            body: JSON.stringify({ serviceId: S.d.picked.id, quantity: S.d.quantity, tooth }),
-          });
-          S.stack.pop();
-          if (tooth) S.stack.pop();
-          return docVisit(S.d.visitId);
-        };
-        if (!perTooth) return add(null);
+        // Каналы и поверхности считаются В ПРЕДЕЛАХ одного зуба: три канала —
+        // это один зуб, а не три. Поэтому здесь выбор одиночный, а
+        // множественный — только у услуг «за зуб».
+        const svc = S.d.picked;
+        if (!['canal', 'surface'].includes(svc.unit_of_norm)) {
+          return addVisitService(svc, S.d.quantity, []);
+        }
         return go(toothPick, {
-          title: 'Какой зуб', sub: S.d.picked.name_ru, onPick: add,
+          title: 'Какой зуб', sub: svc.name_ru,
+          onPick: (teeth) => addVisitService(svc, S.d.quantity, teeth),
         });
       }
       case 'startvisit': {
