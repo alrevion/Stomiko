@@ -163,6 +163,15 @@ async function main() {
       'проверьте вручную: wrangler secret list');
   }
 
+  // Переносимая история: она новее всего остального и ломается тише всего.
+  const { data: ch } = await sb.rpc('clinical_health', {});
+  const c = (ch ?? {}) as Record<string, number>;
+  ok((c.missing ?? 0) === 0,
+    'у каждой оказанной услуги опознанного пациента есть запись в истории',
+    (c.missing ?? 0) ? `без записи: ${c.missing}` : `записей ${c.entries}, людей ${c.people}`);
+  ok((c.orphan_amendments ?? 0) === 0, 'дополнения ссылаются на существующие записи',
+    `${c.orphan_amendments}`);
+
   const { data: tokens } = await sb.from('tenants').select('public_token');
   ok((tokens ?? []).every((t: any) => /^d_[A-Za-z0-9_-]+$/.test(t.public_token)),
     'ссылки кабинетов открываются в Telegram',
