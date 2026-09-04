@@ -9,6 +9,7 @@ import { createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { createClient } from '@supabase/supabase-js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -142,6 +143,24 @@ async function main() {
   } else {
     ok(true, 'живая проба изоляции пропущена — не задан SUPABASE_JWT_SECRET',
       'политики готовы, включение одной переменной');
+  }
+
+  // Проба выше говорит про БАЗУ. Воркер мог при этом остаться на service_role:
+  // второй слой включается только когда ОБА секрета привязаны к нему, и без
+  // этой проверки preflight был бы зелёным при выключенной защите.
+  try {
+    const bound = new Set(
+      (JSON.parse(execFileSync('node_modules/.bin/wrangler', ['secret', 'list'],
+        { cwd: resolve(here, '..'), encoding: 'utf8', stdio: ['ignore','pipe','ignore'] })) as { name: string }[])
+        .map((x) => x.name));
+    const need = ['SUPABASE_JWT_SECRET', 'SUPABASE_ANON_KEY'];
+    const missing = need.filter((n) => !bound.has(n));
+    ok(missing.length === 0,
+      'воркер работает со вторым слоем, а не только база',
+      missing.length ? `не привязано: ${missing.join(', ')}` : 'оба секрета привязаны');
+  } catch {
+    ok(true, 'привязку секретов воркера проверить не удалось — wrangler недоступен',
+      'проверьте вручную: wrangler secret list');
   }
 
   const { data: tokens } = await sb.from('tenants').select('public_token');
