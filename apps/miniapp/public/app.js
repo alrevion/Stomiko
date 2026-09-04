@@ -258,24 +258,77 @@ function welcome() {
  * Пациент без ссылки. Каталога врачей у нас нет — и придумывать его вместо
  * честного ответа неправильно: человек пойдёт по несуществующему пути.
  */
-function needLink() {
+/**
+ * Поиск стоматолога.
+ *
+ * Заменяет собой тупик «нужна ссылка врача». Человек с рекламы приходит без
+ * ссылки — и до этого экрана ему нечего было здесь делать.
+ *
+ * Порядок — по ближайшему свободному времени, без «рекомендуем» и платных
+ * мест: как только платформа начинает советовать, она отвечает за выбор
+ * врача, а отвечать ей нечем.
+ */
+async function needLink(city = '', query = '') {
+  spinner('Ищем кабинеты…');
+  const { cabinets, cities } = await api(
+    `/find?city=${encodeURIComponent(city)}&q=${encodeURIComponent(query)}`);
+  S.d.find = { city, query, cities };
+
+  const when = (iso) => (iso
+    ? `${dateLabel(iso.slice(0, 10), { day: 'numeric', month: 'short' })}, ${hhmm(iso)}`
+    : 'времени пока нет');
+
   render(`
-    <header><h1>Нужна ссылка врача</h1></header>
+    <header><h1>Найти стоматолога</h1>
+      <span class="sub">${cabinets.length
+        ? `${cabinets.length} ${cabinets.length === 1 ? 'кабинет' : 'кабинета'} принимают запись`
+        : 'по вашему запросу пусто'}</span></header>
     <main>
       <div class="card">
-        <div class="note" style="margin:0">Запись открывается по ссылке вашего
-        стоматолога — он присылает её в сообщении или даёт на визитке.
-        Откройте её, и всё остальное произойдёт само.</div>
+        <input class="field" id="findq" placeholder="Название, улица или ориентир"
+          value="${esc(query)}" inputmode="search" enterkeyhint="search" autocomplete="off">
+        ${cities.length > 1 ? `<div class="chips" style="margin-top:10px">
+          <button data-city="" class="${city ? '' : 'on'}">Везде</button>
+          ${cities.map((c) => `<button data-city="${esc(c.city)}"
+            class="${city === c.city ? 'on' : ''}">${esc(c.city)} · ${c.cabinets}</button>`).join('')}
+        </div>` : ''}
       </div>
-      <div class="picker" style="margin-top:8px">
+
+      ${cabinets.length ? cabinets.map((c) => `
+      <div class="stockrow" data-pick-cab="${c.tenantId}">
+        <div class="body">
+          <div class="name">${esc(c.name)}</div>
+          <div class="muted">${c.doctor ? `${esc(c.doctor)} · ` : ''}${esc(c.city ?? '')}${
+            c.landmark ? `, ${esc(c.landmark)}` : c.address ? `, ${esc(c.address)}` : ''}</div>
+          <div class="muted">Ближайшее время: ${when(c.nextSlot)}</div>
+        </div>
+        <div class="qty-val mono">${c.consultPrice != null ? money(c.consultPrice) : '—'}<small>приём</small></div>
+      </div>`).join('')
+      : `<div class="card">
+          <div class="note" style="margin:0">${query || city
+            ? 'По этому запросу ничего не нашлось. Попробуйте другой город или название.'
+            : 'Пока ни один кабинет не открыл запись через поиск. Если вам дали ссылку врача — откройте её, и всё настроится само.'}</div>
+        </div>`}
+
+      <div class="sectiontitle">Другое</div>
+      <div class="picker">
         ${S.d.me?.canBeDoctor
           ? `<button data-act="switcher"><div class="name">Вернуться в кабинет</div>
               <div class="price">вы работаете в Stomiko как врач</div></button>`
           : `<button data-act="iamdoctor"><div class="name">Я врач</div>
               <div class="price">создать свой кабинет или войти по приглашению</div></button>`}
       </div>
+      <div class="card">
+        <div class="note" style="margin:0">Если стоматолог прислал вам ссылку —
+        просто откройте её. Она приведёт прямо к нему, искать не нужно.</div>
+      </div>
     </main>
   `);
+  setTimeout(() => {
+    const el = document.getElementById('findq');
+    if (!el) return;
+    el.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); needLink(city, el.value.trim()); } };
+  }, 60);
 }
 
 /**
@@ -301,6 +354,70 @@ function doctorEntry() {
       </div>
     </main>
   `);
+}
+
+/**
+ * Показ кабинета в поиске.
+ *
+ * Публикация выносит наружу имя врача и телефон, поэтому решение его, а не
+ * платформы, и рядом — предпросмотр: ровно то, что увидят посторонние.
+ */
+async function docListing() {
+  spinner('Загрузка…');
+  const d = await api('/doctor/listing');
+  S.d.listing = d;
+
+  const draw = () => {
+    const l = S.d.listing;
+    const ready = l.city && l.address && l.phone;
+    render(`
+      <header><h1>Показ в поиске</h1>
+        <span class="sub">${l.listed ? 'кабинет виден пациентам' : 'кабинет скрыт'}</span></header>
+      <main>
+        <div class="card">
+          <div class="note" style="margin:0">Пациент, пришедший без вашей ссылки,
+          ищет стоматолога в приложении. Здесь вы решаете, показывать ли ему
+          свой кабинет. Порядок в списке — по ближайшему свободному времени;
+          платных мест нет.</div>
+        </div>
+        <div class="card">
+          <label class="fieldlabel">Город</label>
+          <input class="field" id="lcity" value="${esc(l.city ?? '')}" placeholder="Ташкент">
+          <label class="fieldlabel">Адрес</label>
+          <input class="field" id="laddr" value="${esc(l.address ?? '')}" placeholder="ул. Амира Темура, 12">
+          <label class="fieldlabel">Ориентир — необязательно</label>
+          <input class="field" id="lland" value="${esc(l.landmark ?? '')}" placeholder="напротив Чорсу">
+          <label class="fieldlabel">Телефон для пациентов</label>
+          <input class="field" id="lphone" value="${esc(l.phone ?? '')}" placeholder="+998 __ ___ __ __" inputmode="tel">
+          <div class="note">Без города, адреса и телефона показать кабинет нельзя:
+          такая карточка не отвечает ни на один вопрос пациента.</div>
+        </div>
+
+        <div class="sectiontitle">Так вас увидят</div>
+        <div class="stockrow">
+          <div class="body">
+            <div class="name">${esc(l.name ?? 'Кабинет')}</div>
+            <div class="muted">${esc(l.city || 'город не указан')}${
+              l.landmark ? `, ${esc(l.landmark)}` : l.address ? `, ${esc(l.address)}` : ''}</div>
+            <div class="muted">Ближайшее время подставится само</div>
+          </div>
+          <div class="qty-val mono">${esc(l.phone || '—')}<small>телефон</small></div>
+        </div>
+      </main>
+      <button class="primary ${l.listed ? 'danger' : ''}" data-act="savelisting"
+        data-listed="${l.listed ? '0' : '1'}" ${!ready && !l.listed ? 'disabled' : ''}>
+        ${l.listed ? 'Убрать из поиска' : ready ? 'Показывать в поиске' : 'Заполните город, адрес и телефон'}</button>
+    `);
+  };
+  S.d.redraw = () => { readListingForm(); draw(); };
+  draw();
+}
+
+function readListingForm() {
+  const l = S.d.listing;
+  if (!l) return;
+  l.city = val('lcity'); l.address = val('laddr');
+  l.landmark = val('lland'); l.phone = val('lphone');
 }
 
 /**
@@ -1353,6 +1470,8 @@ async function docMenu() {
           <div class="price">дни, обед, выходные</div></button>
         <button data-act="link"><div class="name">Ссылка для пациентов</div>
           <div class="price">чтобы записывались сами</div></button>
+        <button data-act="listing"><div class="name">Показ в поиске</div>
+          <div class="price">${S.d.listingOn ? 'кабинет виден пациентам' : 'чтобы нашли без ссылки'}</div></button>
         <button data-act="invite"><div class="name">Пригласить в кабинет</div>
           <div class="price">одноразовая ссылка на сутки</div></button>
         <button data-act="billing"><div class="name">Подписка</div>
@@ -2267,7 +2386,7 @@ async function patMy() {
    ══════════════════════════════════════════════════════════════════════════ */
 
 document.addEventListener('click', async (e) => {
-  const el = e.target.closest('[data-day],[data-week],[data-appt],[data-act],[data-service],[data-q],[data-tc],[data-svc],[data-date],[data-time],[data-tourgo],[data-cancel],[data-resched],[data-rtime],[data-tplan],[data-psvc],[data-tq],[data-trm],[data-tstage],[data-pmethod],[data-mplan],[data-wd],[data-add],[data-rm],[data-rmov],[data-rmline],[data-material],[data-batch],[data-unit],[data-pick],[data-wsvc],[data-reason],[data-patient],[data-visit],[data-free],[data-tab],[data-mode],[data-tpl],[data-plan]');
+  const el = e.target.closest('[data-day],[data-week],[data-appt],[data-act],[data-service],[data-q],[data-tc],[data-svc],[data-date],[data-time],[data-tourgo],[data-city],[data-pick-cab],[data-cancel],[data-resched],[data-rtime],[data-tplan],[data-psvc],[data-tq],[data-trm],[data-tstage],[data-pmethod],[data-mplan],[data-wd],[data-add],[data-rm],[data-rmov],[data-rmline],[data-material],[data-batch],[data-unit],[data-pick],[data-wsvc],[data-reason],[data-patient],[data-visit],[data-free],[data-tab],[data-mode],[data-tpl],[data-plan]');
   if (!el) return;
   const d = el.dataset;
   haptic();
@@ -2344,6 +2463,16 @@ document.addEventListener('click', async (e) => {
     if (d.resched) return go(patReschedule, d.resched);
     if (d.rtime) return go(patReschedConfirm, d.rtime);
     if (d.tourgo) return tourGo(d.tourgo);
+    if (d.city !== undefined) return needLink(d.city, S.d.find?.query ?? '');
+    if (d.pickCab) {
+      await api('/me/choose', { method: 'POST', body: JSON.stringify({ tenantId: d.pickCab }) });
+      // Кабинет выбран — личность изменилась целиком, перечитываем себя.
+      S.d.me = await api('/me');
+      dropCache();
+      S.stack = []; S.tab = 0;
+      setTabs('patient');
+      return go(TABS[0].fn);
+    }
     if (d.tplan) return go(docPlan, d.tplan);
     if (d.mplan) return go(patPlan, d.mplan);
     if (d.psvc) {
@@ -2434,6 +2563,18 @@ document.addEventListener('click', async (e) => {
         if (typeof tg?.requestContact === 'function') tg.requestContact(() => {});
         else tg?.openTelegramLink?.(`https://t.me/${S.d.me?.bot ?? 'stomiko_bot'}?start=phone`);
         return awaitPhone(d.at);
+      }
+      case 'listing': return go(docListing);
+      case 'savelisting': {
+        readListingForm();
+        const l = S.d.listing;
+        el.disabled = true;
+        const r = await api('/doctor/listing', { method: 'PUT', body: JSON.stringify({
+          city: l.city, address: l.address, landmark: l.landmark, phone: l.phone,
+          listed: d.listed === '1' }) });
+        S.d.listing = { ...l, ...r, listed: Boolean(r.listed) };
+        toast(r.listed ? 'Кабинет показывается в поиске' : 'Кабинет убран из поиска');
+        return docListing();
       }
       case 'newplan': return go(docPlanEdit, null);
       case 'editplan': return go(docPlanEdit, S.d.tplanView.id);

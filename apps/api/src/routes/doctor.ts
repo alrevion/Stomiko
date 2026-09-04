@@ -448,6 +448,42 @@ doctor.put('/patients/:id', async (c) => {
   return c.json({ ok: true });
 });
 
+// ── Показ кабинета в поиске ─────────────────────────────────────────────────
+
+/**
+ * Карточка кабинета для поиска: что о нём увидят посторонние.
+ *
+ * Отдаём и текущие значения, и признак публикации: врач должен видеть в
+ * точности то, что показывается пациентам, а не догадываться.
+ */
+doctor.get('/listing', async (c) => {
+  const scope = c.get('scope');
+  const t = await scope.rpc<Record<string, unknown>>('cabinet_listing', {
+    p_tenant_id: scope.tenantId,
+  });
+  return c.json({ ...t, listed: Boolean(t?.listed) });
+});
+
+doctor.put('/listing', async (c) => {
+  const scope = c.get('scope');
+  const b = await c.req.json<{
+    city?: string; address?: string; landmark?: string; phone?: string; listed?: boolean;
+  }>().catch(() => ({} as Record<string, never>));
+  try {
+    const res = await scope.rpc<Record<string, unknown>>('set_cabinet_listing', {
+      p_tenant_id: scope.tenantId,
+      p_city: b.city ?? null,
+      p_address: b.address ?? null,
+      p_landmark: b.landmark ?? null,
+      p_phone: b.phone ?? null,
+      p_listed: b.listed === true,
+    });
+    return c.json(res);
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+});
+
 // ── План лечения и деньги ───────────────────────────────────────────────────
 
 /**

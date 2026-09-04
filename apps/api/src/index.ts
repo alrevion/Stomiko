@@ -143,6 +143,58 @@ app.post('/api/me/appointments/:id/cancel', async (c) => {
 });
 
 /**
+ * Поиск стоматолога.
+ *
+ * Единственный маршрут, который работает БЕЗ кабинета: человек пришёл по
+ * рекламе, ссылки врача у него нет, и до этого экрана он упирался в тупик.
+ *
+ * Идёт под служебным ключом, а не под областью кабинета: он по смыслу
+ * пересекает кабинеты. Отдаёт ровно тот набор полей, который кабинет сам
+ * открыл, — не «те же данные с фильтром», а другой набор.
+ */
+app.get('/api/find', async (c) => {
+  const sb = c.get('sb');
+  const [cabs, cities] = await Promise.all([
+    sb.rpc('public_cabinets', {
+      p_city: c.req.query('city') ?? null,
+      p_query: c.req.query('q') ?? null,
+    }),
+    sb.rpc('public_cities', {}),
+  ]);
+  if (cabs.error) return c.json({ error: cabs.error.message }, 500);
+  return c.json({
+    cabinets: ((cabs.data ?? []) as Record<string, unknown>[]).map((r) => ({
+      tenantId: r.tenant_id,
+      name: r.name,
+      doctor: r.doctor,
+      city: r.city,
+      address: r.address,
+      landmark: r.landmark,
+      phone: r.phone,
+      consultPrice: r.consult_price == null ? null : Number(r.consult_price),
+      nextSlot: r.next_slot,
+    })),
+    cities: ((cities.data ?? []) as Record<string, unknown>[])
+      .map((r) => ({ city: r.city, cabinets: Number(r.cabinets) })),
+  });
+});
+
+/** Выбор кабинета из поиска. Право даёт публикация, а не знание номера. */
+app.post('/api/me/choose', async (c) => {
+  const b = await c.req.json<{ tenantId?: string }>().catch(() => ({} as { tenantId?: string }));
+  if (!b.tenantId) return c.json({ error: 'не выбран кабинет' }, 400);
+  try {
+    const { data, error } = await c.get('sb').rpc('choose_public_cabinet', {
+      p_subject: c.get('identity').subject, p_tenant_id: b.tenantId,
+    });
+    if (error) throw new Error(error.message);
+    return c.json(data);
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+});
+
+/**
  * План лечения глазами пациента.
  *
  * Сквозной, как список записей: человек лечится в нескольких кабинетах и

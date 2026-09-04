@@ -230,6 +230,14 @@ interface UserContext {
   activeMode: 'patient' | 'doctor';
   activeTenantId: string | null;
   modeChosen: boolean;
+  /**
+   * Кабинет, выбранный в поиске.
+   *
+   * Отдаётся базой только если человек вправе им пользоваться. Нужен потому,
+   * что пациентом кабинета человек становится с ПЕРВОЙ ЗАПИСЬЮ, а выбрать
+   * кабинет он должен раньше — иначе замкнутый круг.
+   */
+  activeCabinet: Cabinet | null;
   staffOf: Cabinet[];
   patientOf: Cabinet[];
 }
@@ -306,7 +314,11 @@ export async function resolveIdentity(
 
   // 3. Вход без ссылки — по тому, что мы про человека знаем.
   const staffTarget = ctx.staffOf.find((c) => c.tenantId === ctx.activeTenantId) ?? ctx.staffOf[0];
-  const patientTarget = ctx.patientOf.find((c) => c.tenantId === ctx.activeTenantId) ?? ctx.patientOf[0];
+  // Выбранный в поиске кабинет идёт вперёд запасного варианта: человек
+  // только что указал, куда хочет, и подставлять ему вместо этого первый
+  // попавшийся из истории — значит потерять его выбор.
+  const patientTarget = ctx.patientOf.find((c) => c.tenantId === ctx.activeTenantId)
+    ?? ctx.activeCabinet ?? ctx.patientOf[0];
   const nowhere: Identity = {
     ...base, mode: 'patient', tenantId: null, tenantName: '', publicToken: '', needsChoice: false,
   };
