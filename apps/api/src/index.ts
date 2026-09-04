@@ -524,7 +524,8 @@ app.post('/api/doctor/visits', async (c) => {
 app.post('/api/doctor/visits/:id/services', async (c) => {
   const scope = c.get('scope');
   const visitId = c.req.param('id');
-  const { serviceId, quantity } = await c.req.json<{ serviceId: string; quantity?: number }>();
+  const { serviceId, quantity, tooth } = await c.req.json<{
+    serviceId: string; quantity?: number; tooth?: string | null }>();
 
   const { data: svc, error } = await scope
     .select('services', 'id, price, techcard_version_id')
@@ -533,10 +534,17 @@ app.post('/api/doctor/visits/:id/services', async (c) => {
   if (error || !svc) return c.json({ error: 'услуга не найдена' }, 404);
 
   const qty = Math.max(1, Math.floor(quantity ?? 1));
+  // Зуб проверяем здесь же, а не только в БД: пустая строка из формы должна
+  // стать отсутствием зуба, а не отказом вставки.
+  const t = (tooth ?? '').trim();
+  if (t && !/^[1-8][1-8]$/.test(t)) {
+    return c.json({ error: `«${t}» — не номер зуба по FDI. Например 26.` }, 400);
+  }
   const rows = await scope.insert('visit_services', {
     visit_id: visitId,
     service_id: serviceId,
     quantity: qty,
+    tooth: t || null,
     // Цена фиксируется по факту: прайс мог измениться после оказания.
     price: Number((svc as { price: number }).price) * qty,
     techcard_version_id: (svc as { techcard_version_id: string }).techcard_version_id,

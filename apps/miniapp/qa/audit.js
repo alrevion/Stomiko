@@ -22,6 +22,10 @@ window.__audit = function (label) {
     add('ГОРИЗОНТАЛЬНАЯ ПРОКРУТКА: ' + document.documentElement.scrollWidth + ' при ' + window.innerWidth);
   document.querySelectorAll('#root *').forEach((el) => {
     if (el.children.length) return;
+    // Внутри SVG scrollWidth значит другое: обрезает там viewBox, а не бокс
+    // элемента. Без этой оговорки зубная карта давала четырнадцать «обрезано»
+    // на номерах, которые видно целиком.
+    if (el.ownerSVGElement || el.tagName === 'svg') return;
     if (el.scrollWidth > el.clientWidth + 2 && el.clientWidth > 0 && getComputedStyle(el).overflow === 'visible')
       add('ОБРЕЗАНО: «' + (el.textContent || '').trim().slice(0, 30) + '» шире на ' + (el.scrollWidth - el.clientWidth) + 'px');
   });

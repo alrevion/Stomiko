@@ -918,3 +918,61 @@ td { padding: var(--s2) 0; border-top: 1px solid var(--hair); vertical-align: to
 .danger-zone .note { padding-left: 0; border-left: 0; }
 .danger-zone .sectiontitle { color: var(--bad); }
 .danger-zone .mini { width: 100%; min-height: 48px; }
+
+/* ── Зубная карта ──────────────────────────────────────────────────────
+   Зуб — это данные (номер по FDI, тип, состояние), а не картинка. Форма
+   считается из номера: четыре силуэта — резец, клык, премоляр, моляр — и
+   зеркало по половинам. Тридцать два файла держать незачем, а перекрасить
+   один зуб в SVG можно, в PNG нельзя. */
+
+.chart { display: block; width: 100%; height: auto; touch-action: manipulation; }
+.chart .tooth { cursor: pointer; }
+.chart .crown, .chart .root {
+  fill: var(--surface-2);
+  stroke: var(--label-4);
+  stroke-width: 1.5;
+  transition: fill var(--dur-press) var(--ease);
+}
+.chart .tooth.done .crown { fill: var(--accent-soft); stroke: var(--accent); }
+.chart .tooth.done .root  { fill: var(--accent-soft); stroke: var(--accent-line); }
+.chart .tooth.on .crown, .chart .tooth.on .root {
+  fill: var(--accent); stroke: var(--accent);
+}
+.chart .tooth.on .num { fill: var(--accent); font-weight: 700; }
+.chart .num {
+  fill: var(--label-3);
+  /* Номера сидят по внутренней дуге, а она короче внешней: у резцов на
+     номер приходится около 14 единиц. Одиннадцатый кегль в них не влезал —
+     «13 12 11 21» слипались в одну строку. */
+  font: 600 9.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: -0.03em;
+  text-anchor: middle;
+}
+.chart .tooth.done .num { fill: var(--label); }
+.chart .hit { fill: transparent; }
+.chart .tooth:active .crown { fill: var(--accent-line); }
+.chart-legend {
+  display: flex; gap: var(--s4); flex-wrap: wrap;
+  margin-top: var(--s2); color: var(--label-3); font-size: 13px;
+}
+.chart-legend i {
+  display: inline-block; width: 12px; height: 12px; border-radius: 3px;
+  border: 1.5px solid var(--label-4); background: var(--surface-2);
+  vertical-align: -1px; margin-right: 6px;
+}
+.chart-legend .done i { background: var(--accent-soft); border-color: var(--accent); }
+.chart-legend .sel i { background: var(--accent); border-color: var(--accent); }
+.jaw-label {
+  font-size: 12px; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--label-4); margin: var(--s2) 0 calc(var(--s1) * -1);
+}
+
+/* Кнопка-поле: выглядит как поле ввода, ведёт на экран выбора. */
+.pickfield {
+  text-align: left; font: inherit; color: var(--label);
+  background: var(--bg); border: 1px solid var(--sep);
+}
+.tooth-chip {
+  margin-left: var(--s2); padding: 2px var(--s2); min-height: 30px;
+  font-size: 13px; vertical-align: middle;
+}

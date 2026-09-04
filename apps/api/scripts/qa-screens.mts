@@ -19,6 +19,11 @@ const call = (uid: number) => async (p: string, init: RequestInit = {}) => {
   const r = await fetch(`http://localhost:8787/api${p}`, { ...init, headers:{ 'Content-Type':'application/json','X-Telegram-Init-Data': sign(uid,'QA'), ...(init.headers??{}) } });
   return { status: r.status, body: await r.json().catch(()=>({})) as any };
 };
+// Кабинет прошлого обхода удаляем целиком, а не только членство: осиротевший
+// кабинет остаётся в поиске и роняет предполётную проверку «проверочных
+// аккаунтов не осталось». Один раз уже уронил.
+const { data: old_ } = await sb.from('memberships').select('tenant_id').eq('subject', `tg:${DOC}`);
+for (const m of old_ ?? []) await sb.rpc('delete_tenant', { p_tenant_id: m.tenant_id });
 await sb.from('memberships').delete().eq('subject', `tg:${DOC}`);
 await sb.from('app_users').delete().in('subject', [`tg:${DOC}`, `tg:${PAT}`]);
 

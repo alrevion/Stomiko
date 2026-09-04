@@ -474,6 +474,25 @@ doctor.post('/record/:entryId/amend', async (c) => {
   }
 });
 
+/**
+ * Зуб у оказанной услуги.
+ *
+ * Отдельным маршрутом: зуб чаще уточняют уже после того, как услугу внесли —
+ * врач сначала записывает, что сделал, и только потом смотрит, на каком зубе.
+ * Правило «пока приём открыт» держит функция БД.
+ */
+doctor.put('/visit-services/:id/tooth', async (c) => {
+  const b = await c.req.json<{ tooth?: string | null }>().catch(() => ({} as { tooth?: string }));
+  try {
+    const res = await c.get('scope').rpc<Record<string, unknown>>('set_visit_service_tooth', {
+      p_visit_service_id: c.req.param('id'), p_tooth: b.tooth ?? null,
+    });
+    return c.json(res);
+  } catch (err) {
+    return c.json({ error: (err as Error).message.replace(/^set_visit_service_tooth: /, '') }, 400);
+  }
+});
+
 /** Заметка о пациенте: аллергия, особенности, о чём договорились. */
 doctor.put('/patients/:id', async (c) => {
   const scope = c.get('scope');
