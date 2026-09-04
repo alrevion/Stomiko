@@ -6,3 +6,8 @@ dist
 # Мусор macOS и временное состояние инструментов — не часть продукта.
 .DS_Store
 .omc/
+
+# Стенд обхода интерфейса — временный, в репозиторий не попадает.
+apps/miniapp/public/_qa.html
+apps/miniapp/public/_qa-audit.js
+.qa.json
