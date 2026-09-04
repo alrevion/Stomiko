@@ -272,7 +272,7 @@ function needLink() {
           ? `<button data-act="switcher"><div class="name">Вернуться в кабинет</div>
               <div class="price">вы работаете в Stomiko как врач</div></button>`
           : `<button data-act="iamdoctor"><div class="name">Я врач</div>
-              <div class="price">у меня есть приглашение в кабинет</div></button>`}
+              <div class="price">создать свой кабинет или войти по приглашению</div></button>`}
       </div>
     </main>
   `);
