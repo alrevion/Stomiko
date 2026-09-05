@@ -57,17 +57,50 @@ const addDays = (n: number) =>
   new Date(Date.now() + n * 864e5).toLocaleDateString('en-CA', { timeZone: 'Asia/Tashkent' });
 
 const DOC_UID = 900001;
+// Не 900002: соседний номер занят проверкой «приглашение одноразовое»,
+// которая входит вторым человеком как DOC_UID + 1. Совпадение делало
+// вторым входящим самого владельца, и проверка молча теряла смысл.
+const OWNER_UID = 900009;
 const PAT_UID = 970000 + (Date.now() % 9000);
 
+/**
+ * Кабинет проверки — СВОЙ, а не первый попавшийся.
+ *
+ * Раньше здесь стояло `tenants limit 1`, и проверка работала внутри боевого
+ * кабинета владельца: заводила туда пациента «Проверка Готовности» и
+ * записывала его на приём. Запись настоящая — значит владельцу приходило
+ * настоящее уведомление «Новая запись», каждый запуск. Я неделю засорял ему
+ * личный чат собственной проверкой и увидел это только на его скриншоте.
+ *
+ * Заодно проверка перестала зависеть от того, есть ли на платформе хоть один
+ * кабинет: теперь она заводит его сама и сама же убирает.
+ */
+let TENANT = '';
+
 async function main() {
+  section('── Свой кабинет для проверки ──');
+  const owner = as(OWNER_UID);
+  const reg = await owner('/onboarding/register', {
+    method: 'POST',
+    body: JSON.stringify({ name: 'Кабинет Проверки', doctorName: 'Проверкин П.П.', template: 'therapist' }),
+  });
+  ok(reg.status === 200, 'кабинет заводится с нуля', String(reg.body.error ?? reg.body.tenantId));
+  TENANT = String(reg.body.tenantId);
+
   section('── Данные кабинета ──');
-  const { count: patients } = await sb.from('patients').select('*', { count: 'exact', head: true });
+  const { count: patients } = await sb.from('patients')
+    .select('*', { count: 'exact', head: true }).eq('tenant_id', TENANT);
   const { count: upcoming } = await sb.from('appointments')
-    .select('*', { count: 'exact', head: true }).eq('status', 'scheduled').gte('starts_at', new Date().toISOString());
-  const { count: closed } = await sb.from('visits').select('*', { count: 'exact', head: true }).eq('status', 'closed');
-  ok((closed ?? 0) >= 100, 'история приёмов наполнена', `${closed} закрытых`);
+    .select('*', { count: 'exact', head: true }).eq('tenant_id', TENANT)
+    .eq('status', 'scheduled').gte('starts_at', new Date().toISOString());
+  const { count: closed } = await sb.from('visits')
+    .select('*', { count: 'exact', head: true }).eq('tenant_id', TENANT).eq('status', 'closed');
+  // Пороги — под ДЕМО нового кабинета, а не под кабинет, поработавший месяц.
+  // Прежние 100 приёмов и 50 пациентов были снимком накопленной базы
+  // владельца и к «готов ли продукт для нового врача» отношения не имели.
+  ok((closed ?? 0) >= 10, 'демо-история приёмов наполнена', `${closed} закрытых`);
   ok((upcoming ?? 0) >= 8, 'календарь на неделю не пустой', `${upcoming} записей впереди`);
-  ok((patients ?? 0) > 50, 'база пациентов есть', `${patients}`);
+  ok((patients ?? 0) >= 10, 'демо-база пациентов есть', `${patients}`);
 
   const { data: junk } = await sb.from('patients').select('full_name')
     .in('full_name', ['Тестовый Пациент', 'Конфликтный Пациент', 'Тест Пациент', 'ТЕСТ Цепочка']);
@@ -121,7 +154,7 @@ async function main() {
       if (!r.ok) return { refused: `${r.status} ${(await r.text()).slice(0, 120)}` };
       return { rows: ((await r.json()) as unknown[]).length };
     };
-    const { data: tRow } = await sb.from('tenants').select('id').limit(1).maybeSingle();
+    const { data: tRow } = await sb.from('tenants').select('id').eq('id', TENANT).maybeSingle();
     const own = await probe(await sign(String(tRow?.id)));
     const foreign = await probe(await sign('00000000-0000-0000-0000-000000000000'));
     const none = await probe(await sign(null));
@@ -213,10 +246,8 @@ async function main() {
   ok(fakeInvite.status === 401, 'поддельное приглашение отклоняется', String(fakeInvite.body.error));
 
   // Настоящее приглашение выпускает действующий врач.
-  const { data: realOwner } = await sb.from('memberships').select('subject').limit(1).single();
   const inviteToken = (await sb.rpc('create_staff_invite', {
-    p_tenant_id: (await sb.from('tenants').select('id').limit(1).single()).data!.id,
-    p_created_by: realOwner!.subject, p_hours: 1,
+    p_tenant_id: TENANT, p_created_by: `tg:${OWNER_UID}`, p_hours: 1,
   })).data as string;
 
   const doc = as(DOC_UID, inviteToken);
@@ -315,8 +346,8 @@ async function main() {
   section('── История и карточка пациента ──');
   const plist = await doc('/doctor/patients');
   const withHistory = (plist.body.patients ?? []).filter((p: any) => p.visits > 0);
-  ok((plist.body.patients ?? []).length > 20, 'база пациентов открывается', `${(plist.body.patients ?? []).length} в списке`);
-  ok(withHistory.length >= 10, 'у пациентов есть история приёмов',
+  ok((plist.body.patients ?? []).length >= 10, 'база пациентов открывается', `${(plist.body.patients ?? []).length} в списке`);
+  ok(withHistory.length >= 5, 'у пациентов есть история приёмов',
     `${withHistory.length} с приёмами, максимум ${Math.max(...withHistory.map((p: any) => p.visits))}`);
 
   const found = await doc(`/doctor/patients?q=${encodeURIComponent(withHistory[0].name.split(' ')[0])}`);
@@ -340,7 +371,7 @@ async function main() {
   ok(Number(cal.body.minServiceMinutes) > 0, 'известна самая короткая услуга',
     `${cal.body.minServiceMinutes} мин`);
   const past = await doc(`/doctor/calendar?from=${addDays(-14)}&to=${addDays(-1)}`);
-  ok((past.body.appointments ?? []).length > 20, 'история видна в календаре, а не только в отчёте',
+  ok((past.body.appointments ?? []).length >= 10, 'история видна в календаре, а не только в отчёте',
     `${(past.body.appointments ?? []).length} записей за две недели`);
 
   section('── Расписание ──');
@@ -378,7 +409,7 @@ async function main() {
   // Журнал, который заполняет вызывающий код, однажды забудут — и забудут
   // ровно там, где он потом будет нужен. Поэтому актор обязателен.
   const noActor = await sb.rpc('patient_card', {
-    p_tenant_id: (await sb.from('tenants').select('id').limit(1).single()).data!.id,
+    p_tenant_id: TENANT,
     p_patient_id: withHistory[0].id,
   } as any);
   ok(Boolean(noActor.error), 'карточку нельзя открыть, не назвавшись',
@@ -428,9 +459,9 @@ async function main() {
     const { error: delErr } = await sb.from('patients').delete().in('id', junkIds);
     ok(!delErr, 'проверочные карточки удалены', delErr?.message ?? `${junkIds.length} шт.`);
   }
-  await sb.from('memberships').delete().eq('subject', `tg:${DOC_UID}`);
+  const dropped = await sb.rpc('delete_tenant', { p_tenant_id: TENANT });
+  ok(!dropped.error, 'кабинет проверки удалён', dropped.error?.message ?? '');
   await sb.from('app_users').delete().like('subject', 'tg:9%');
-  await sb.from('staff_invites').delete().eq('token', inviteToken);
   // Смысл проверки — что проверочные аккаунты не остались в кабинетах, а не
   // что кабинет в базе один. Пока кабинет был единственным, эти две вещи
   // совпадали; с приходом второго владельца проверка стала падать на

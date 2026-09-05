@@ -731,6 +731,17 @@ async function docWeek(weekStart) {
     S.d.cal = await api(`/doctor/calendar?from=${start}&to=${addDays(start, 6)}`);
     S.d.selectedDay = null;
   }
+  // Если сегодня выходной — открываем ближайший рабочий день, а не пустой
+  // экран с надписью «выходной». Врач, создавший кабинет в субботу, первым
+  // делом видел пустоту и решал, что кабинет не работает.
+  if (!S.d.selectedDay) {
+    const today = localDate();
+    for (let i = 0; i < 7; i += 1) {
+      const day = addDays(start, i);
+      if (day < today) continue;
+      if (!dayInfo(day).closed) { S.d.selectedDay = day; break; }
+    }
+  }
   drawWeek();
 }
 
@@ -786,7 +797,11 @@ function dayListHtml(date) {
   ].sort((x, y) => x.at - y.at);
 
   if (!entries.length) {
-    return `<div class="empty">${info.closed ? 'Выходной' : 'На этот день записей нет'}</div>`;
+    // «Выходной» уже стоит подзаголовком дня — второй раз в теле это не
+    // сообщение, а эхо. Здесь говорим то, чего наверху нет.
+    return `<div class="empty">${info.closed
+      ? 'В этот день вы не принимаете. Можно открыть его разово в рабочих часах.'
+      : 'На этот день записей нет'}</div>`;
   }
 
   return entries.map((e) => {
@@ -3057,6 +3072,11 @@ function drawPatRecord() {
 
 async function patMy() {
   spinner('Загрузка…');
+  // Поздравление живёт один показ: на второй заход это уже не новость.
+  // Снимаем флаг СРАЗУ в локальную переменную — экран рисуется после
+  // сетевых запросов, и отложенная очистка успела бы сработать раньше.
+  const justBooked = S.d.justBooked;
+  S.d.justBooked = null;
   // Записи по ВСЕМ кабинетам, где человек лечится, а не только по активному:
   // он может ходить к терапевту и к ортопеду, и держать это в двух местах —
   // значит заставлять его переключаться, чтобы увидеть свои же приёмы.
@@ -3082,6 +3102,12 @@ async function patMy() {
             ? `К оплате за сделанное: ${money(p.balance.debt)} сум.`
             : 'Задолженности нет.'} Нажмите, чтобы посмотреть этапы.</div>
       </div>`).join('')}
+      ${justBooked ? `<div class="card ok">
+        <div class="row"><span class="name">Вы записаны</span></div>
+        <div class="note" style="margin:6px 0 0">${esc(justBooked.service)} —
+        ${dateLabel(justBooked.at.slice(0, 10))}, ${hhmm(justBooked.at)}.
+        Врач уже видит вашу запись. Напомним за сутки и за два часа.</div>
+      </div>` : ''}
       ${S.d.noNotifications ? `<div class="card warn">
         <div class="name">Включите уведомления</div>
         <div class="note" style="margin-top:6px">Мы не сможем предупредить вас, если приём
@@ -3265,6 +3291,23 @@ document.addEventListener('click', async (e) => {
 
     if (d.service) {
       const svc = S.d.services.find((s) => s.id === d.service);
+      // Услуга уже в приёме — значит врач не добавляет вторую такую же, а
+      // уточняет зубы у той. Начало приёма подставляет услугу из записи БЕЗ
+      // зуба, и нажатие на неё в прайсе раньше давало «пломба» и «пломба ×2»
+      // двумя строками — то, чего никто не просил.
+      const already = (S.d.visit?.services ?? []).find((x) => x.name === svc.name_ru);
+      if (already && ['tooth', 'canal', 'surface'].includes(svc.unit_of_norm)) {
+        return go(toothPick, {
+          title: 'Какие зубы', sub: svc.name_ru, many: svc.unit_of_norm === 'tooth',
+          value: already.teeth ?? [],
+          onPick: async (teeth) => {
+            await api(`/doctor/visit-services/${already.id}/teeth`,
+              { method: 'PUT', body: JSON.stringify({ teeth }) });
+            S.stack.pop();
+            return docVisit(S.d.visitId);
+          },
+        });
+      }
       if (svc.unit_of_norm === 'session' || svc.unit_of_norm === 'jaw') {
         await api(`/doctor/visits/${S.d.visitId}/services`, {
           method: 'POST', body: JSON.stringify({ serviceId: svc.id, quantity: 1 }),
@@ -3719,6 +3762,25 @@ document.addEventListener('click', async (e) => {
         return go(docVisit, visitId);
       }
       case 'close': {
+        // Услуга «за зуб» без зуба уходит в карту пациента строкой «пломба —
+        // неизвестно где». Исправить её потом нельзя: запись запечатывается
+        // этим самым закрытием. Поэтому спрашиваем ДО, а не сожалеем после.
+        const noTeeth = (S.d.visit?.services ?? []).filter((x) => {
+          const svc = (S.d.services ?? []).find((y) => y.name_ru === x.name);
+          return svc && ['tooth', 'canal', 'surface'].includes(svc.unit_of_norm)
+            && !(x.teeth ?? []).length;
+        });
+        if (noTeeth.length) {
+          const go_ = await ask({
+            title: 'Закрыть без зуба?',
+            body: `${noTeeth.map((x) => `<b>${esc(x.name)}</b>`).join('<br>')}
+              <br><br>У ${noTeeth.length === 1 ? 'этой услуги' : 'этих услуг'} не указан зуб.
+              В карте пациента останется запись без номера, и дописать его будет
+              нельзя — приём запечатывается закрытием.`,
+            confirm: 'Всё равно закрыть', cancel: 'Указать зуб',
+          });
+          if (!go_) return;
+        }
         el.disabled = true; el.textContent = 'Закрываем…';
         const r = await api(`/doctor/visits/${S.d.visitId}/close`, { method: 'POST' });
         tg?.HapticFeedback?.notificationOccurred?.('success');
@@ -3870,6 +3932,14 @@ document.addEventListener('click', async (e) => {
         // Бот не может написать первым тому, кто не начинал с ним чат. Пациент
         // должен узнать это сейчас, а не в день несостоявшегося приёма.
         S.d.noNotifications = r.notificationsEnabled === false;
+        // Подсветка вкладки — не украшение: экран «Мои записи» при горящей
+        // вкладке «Запись» читается как «я нажал не туда».
+        const myTab = TABS.findIndex((t) => t.k === 'my');
+        if (myTab >= 0) S.tab = myTab;
+        // Первое, что человек видит после записи, — что он записан. Раньше
+        // первым было предупреждение про уведомления: он сделал дело, а его
+        // встречает укор.
+        S.d.justBooked = { at: d.at, service: S.d.service.name };
         return go(patMy);
       }
       default: return;
