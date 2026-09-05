@@ -1,10 +1,11 @@
 import { Hono } from 'hono';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { closeVisit } from '../close.js';
 import type { Env, Identity, TenantScope } from '../db.js';
 import { acknowledgeShortfall } from '../stock.js';
 import { notifyCancelled, notifyPlanReady, notifyReminder, type CancelNotice } from '../notify.js';
 
-type Vars = { scope: TenantScope; identity: Identity };
+type Vars = { scope: TenantScope; identity: Identity; sb: SupabaseClient };
 export const doctor = new Hono<{ Bindings: Env; Variables: Vars }>();
 
 const TZ = 'Asia/Tashkent';
@@ -491,6 +492,53 @@ doctor.put('/visit-services/:id/teeth', async (c) => {
     return c.json(res);
   } catch (err) {
     return c.json({ error: (err as Error).message.replace(/^set_visit_service_teeth: /, '') }, 400);
+  }
+});
+
+/**
+ * Зубная карта пациента: что с зубами сейчас.
+ *
+ * Палитра приходит вместе с картой одним запросом: без неё карту нечем
+ * раскрасить, а два запроса на один экран — это два повода ему не открыться.
+ */
+doctor.get('/patients/:id/teeth', async (c) => {
+  const scope = c.get('scope');
+  try {
+    // Палитра идёт мимо области кабинета: `scope.rpc` подставляет
+    // `p_tenant_id` в КАЖДЫЙ вызов, а у справочника аргументов нет — и
+    // Postgres честно отвечает, что функции с таким аргументом не знает.
+    // Справочник общий для всех кабинетов, тенант ему и не нужен.
+    const [chart, palette] = await Promise.all([
+      scope.rpc<Record<string, unknown>>('patient_tooth_chart', {
+        p_patient_id: c.req.param('id'), p_actor: c.get('identity').subject,
+      }),
+      c.get('sb').rpc('mark_palette', {}),
+    ]);
+    return c.json({ ...(chart as object), palette: palette.data ?? [] });
+  } catch (err) {
+    const msg = (err as Error).message.replace(/^\w+: /, '');
+    return c.json({ error: msg }, /не найден/.test(msg) ? 404 : 403);
+  }
+});
+
+/** Поставить отметку на зуб. Пустой код значит «снять». */
+doctor.post('/patients/:id/teeth', async (c) => {
+  const scope = c.get('scope');
+  const b = await c.req.json<{ tooth?: string; code?: string; category?: string; note?: string }>()
+    .catch(() => ({} as Record<string, string>));
+  try {
+    const res = b.code
+      ? await scope.rpc<Record<string, unknown>>('set_tooth_mark', {
+          p_patient_id: c.req.param('id'), p_tooth: b.tooth ?? '',
+          p_code: b.code, p_note: b.note ?? null, p_actor: c.get('identity').subject,
+        })
+      : await scope.rpc<Record<string, unknown>>('clear_tooth_mark', {
+          p_patient_id: c.req.param('id'), p_tooth: b.tooth ?? '',
+          p_category: b.category ?? '', p_actor: c.get('identity').subject,
+        });
+    return c.json(res);
+  } catch (err) {
+    return c.json({ error: (err as Error).message.replace(/^\w+: /, '') }, 400);
   }
 });
 

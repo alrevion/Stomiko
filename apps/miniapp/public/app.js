@@ -1317,7 +1317,8 @@ async function docPatient(patientId) {
           : `Карта принадлежит пациенту, и сейчас она закрыта: он не записан и приёма
              нет. Откроется сама, как только он запишется, — и закроется, когда вы
              закроете приём. Уточнить запись можно только в это время.`}</div>
-        ${p.inTelegram && hasAccess ? '<button class="mini" data-act="record">Открыть карту</button>' : ''}
+        ${hasAccess ? `<button class="mini" data-act="teeth">Зубы: кариес, пломбы, коронки</button>` : ''}
+        ${p.inTelegram && hasAccess ? '<button class="mini" data-act="record">Что лечили</button>' : ''}
       </div>
 
       <div class="sectiontitle">История приёмов</div>
@@ -1436,6 +1437,120 @@ function drawDocRecord() {
         уточнение встаёт рядом, и следующий врач видит оба.</div>
       </div>
     </main>
+  `);
+}
+
+/* ── Отметки состояний ─────────────────────────────────────────────────
+   Кариес, пломба, коронка и остальное, что врач видит во рту. Хранится не
+   как «услуга», а как СОСТОЯНИЕ: услуга говорит, что пломбу ставили, а
+   отметка — что она сейчас стоит. Через два года это разные вопросы. */
+
+const MARK_GROUPS = [
+  { key: 'state', name: 'Состояние зуба' },
+  { key: 'lesion', name: 'Поражения' },
+  { key: 'perio', name: 'Пародонт' },
+  { key: 'endo', name: 'Эндодонтия' },
+  { key: 'build', name: 'Конструкции' },
+];
+
+/** Отметки по зубам: с сервера приходит плоский список. */
+const byTooth = (marks) => (marks ?? []).reduce(
+  (m, x) => ({ ...m, [x.tooth]: [...(m[x.tooth] ?? []), x] }), {});
+
+/**
+ * Зубная карта у врача.
+ *
+ * Порядок действий тот же, что в любой карте: выбрать отметку, нажать зуб.
+ * Обратный порядок — «нажать зуб, потом выбрать» — требует всплывающего окна
+ * на каждое касание, а врач ставит десяток отметок подряд.
+ */
+async function docTeeth(patientId) {
+  spinner('Открываем зубы…');
+  let data;
+  try {
+    data = await api(`/doctor/patients/${patientId}/teeth`);
+  } catch (err) {
+    return render(`
+      <header><h1>Зубы закрыты</h1></header>
+      <main><div class="card warn"><div class="note" style="margin:0">${esc(err.message)}</div></div>
+      <div class="card"><div class="note" style="margin:0">Зубная карта принадлежит пациенту.
+      Она открывается вам с той минуты, как он к вам записан, и остаётся открытой,
+      пока приём не закрыт.</div></div></main>
+    `);
+  }
+  S.d.teeth = {
+    patientId,
+    marks: data.marks ?? [],
+    history: data.history ?? [],
+    palette: data.palette ?? [],
+    pick: S.d.teeth?.patientId === patientId ? S.d.teeth.pick : null,
+    open: S.d.teeth?.patientId === patientId ? S.d.teeth.open : 'lesion',
+    milk: S.d.teeth?.patientId === patientId ? S.d.teeth.milk : false,
+    tooth: null,
+  };
+  drawDocTeeth();
+}
+
+function drawDocTeeth() {
+  const d = S.d.teeth;
+  const states = byTooth(d.marks);
+  const picked = d.palette.find((x) => x.code === d.pick);
+  const focus = d.tooth ? (states[d.tooth] ?? []) : [];
+
+  render(`
+    <header><h1>Зубы: ${esc(S.d.patient?.name ?? '')}</h1>
+      <span class="sub">${d.marks.length
+        ? `${d.marks.length} ${plural(d.marks.length, 'отметка', 'отметки', 'отметок')}`
+        : 'отметок пока нет'}</span></header>
+    <main>
+      ${chartCard({
+        states, selected: d.tooth ? [d.tooth] : [], milk: d.milk, wide: true,
+        note: picked
+          ? `Выбрано: <b>${esc(picked.name)}</b>. Нажимайте зубы — отметка встанет на каждый.`
+          : 'Выберите отметку внизу и нажмите зуб. Нажатие без отметки покажет, что на зубе уже есть.',
+      })}
+
+      ${d.tooth ? `<div class="card ok">
+        <div class="row"><span class="name">Зуб ${esc(d.tooth)}</span>
+          <button class="mini" data-act="unfocus">Закрыть</button></div>
+        ${focus.length ? focus.map((m) => `<div class="row">
+          <span><i class="swatch" style="background:${m.color}"></i>${esc(m.name)}
+            <br><span class="muted">${esc(m.cabinet)}${m.doctor ? `, ${esc(m.doctor)}` : ''} · ${
+              dateLabel(m.notedOn, { day: 'numeric', month: 'short' })}</span></span>
+          <button class="mini" data-clearmark="${m.category}">Снять</button>
+        </div>`).join('')
+        : '<div class="note" style="margin:0">На этом зубе отметок нет.</div>'}
+      </div>` : ''}
+
+      ${MARK_GROUPS.map((g) => {
+        const items = d.palette.filter((x) => x.category === g.key);
+        if (!items.length) return '';
+        const open = d.open === g.key;
+        return `<div class="card">
+          <div class="row" data-markgroup="${g.key}">
+            <span class="name">${g.name}</span>
+            <span class="muted">${open ? '▾' : '▸'}</span>
+          </div>
+          ${open ? `<div class="marks">${items.map((x) => `
+            <button class="markbtn${d.pick === x.code ? ' on' : ''}" data-markcode="${x.code}">
+              <i class="swatch" style="background:${x.color}"></i>${esc(x.name)}
+            </button>`).join('')}</div>` : ''}
+        </div>`;
+      }).join('')}
+
+      ${d.history.length ? `<div class="sectiontitle">Что менялось</div>
+      <div class="card">${d.history.slice(0, 12).map((h) => `<div class="row">
+        <span>${h.code
+          ? `<i class="swatch" style="background:${h.color}"></i>${esc(h.name)}`
+          : '<i class="swatch off"></i>снято'} · зуб ${esc(h.tooth)}
+          <br><span class="muted">${esc(h.cabinet)}${h.doctor ? `, ${esc(h.doctor)}` : ''}</span></span>
+        <span class="muted mono">${dateLabel(h.notedOn, { day: 'numeric', month: 'short' })}</span>
+      </div>`).join('')}
+        <div class="note">Отметки не переписываются: новая вытесняет прежнюю, а прежняя
+        остаётся здесь. Видно, что на зубе сначала был кариес, а потом пломба.</div>
+      </div>` : ''}
+    </main>
+    ${picked ? `<button class="primary" data-act="dropmark">Отложить «${esc(picked.name)}»</button>` : ''}
   `);
 }
 
@@ -2665,7 +2780,19 @@ const place = (sym, x, y, w, h, mx = 1, my = 1) =>
  * Половины зеркалим по горизонтали: рисунок один, а зубы слева и справа —
  * отражения. Так делает и сам набор, иначе пришлось бы держать 32 файла.
  */
-function jawRow(numbers, { up, marks, selected, milk, top }) {
+/**
+ * Какая отметка красит зуб.
+ *
+ * Отметок на зубе может быть несколько сразу — на 26 и кариес, и пломба, и
+ * запломбированный канал. Красить зуб всеми значит не покрасить ничем,
+ * поэтому цвет берёт одна, самая тяжёлая: нет зуба важнее коронки, коронка
+ * важнее кариеса, кариес важнее состояния канала. Остальные — точками.
+ */
+const MARK_WEIGHT = { state: 0, build: 1, lesion: 2, endo: 3, perio: 4 };
+const leadMark = (list) => (list ?? []).slice()
+  .sort((a, b) => (MARK_WEIGHT[a.category] ?? 9) - (MARK_WEIGHT[b.category] ?? 9))[0];
+
+function jawRow(numbers, { up, marks, states, selected, milk, top, dots }) {
   const half = numbers.length / 2;
   return numbers.map((t, i) => {
     const x = i * W;
@@ -2677,18 +2804,37 @@ function jawRow(numbers, { up, marks, selected, milk, top }) {
 
     const on = selected.includes(String(t));
     const done = marks[t];
-    const label = done
-      ? `зуб ${t}, ${done} ${plural(done, 'запись', 'записи', 'записей')}`
-      : `зуб ${t}, записей нет`;
+    const mine = states[t] ?? [];
+    const lead = leadMark(mine);
+    const label = [
+      `зуб ${t}`,
+      mine.length ? mine.map((m) => m.name.toLowerCase()).join(', ') : null,
+      done ? `${done} ${plural(done, 'запись', 'записи', 'записей')}` : null,
+    ].filter(Boolean).join(', ');
 
-    return `<g class="tooth${done ? ' done' : ''}${on ? ' on' : ''}"
+    // Заливка поверх рисунка, а не вместо него: multiply красит эмаль,
+    // оставляя корень, пульпу и разницу между моляром и резцом.
+    // Красим КОРОНКУ, а не весь зуб: корни цветом кариеса — это уже другой
+    // диагноз. Коронка занимает примерно нижние 55% рисунка у верхней
+    // челюсти и верхние у нижней, потому что рисунок перевёрнут.
+    const tintH = CROWN * 0.55;
+    const tint = lead ? `<rect class="tint" x="${x + 4}"
+        y="${up ? crownY + CROWN - tintH : crownY}" width="${W - 8}"
+        height="${tintH}" rx="5" fill="${lead.color}"/>` : '';
+    const dotRow = dots && mine.length ? mine.slice(0, 4).map((m, k) =>
+      `<circle class="dot" cx="${x + W / 2 + (k - (Math.min(mine.length, 4) - 1) / 2) * 7}"
+        cy="${up ? top + CROWN + OCCL + 10 : top - 8}" r="2.6" fill="${m.color}"/>`).join('') : '';
+
+    return `<g class="tooth${done ? ' done' : ''}${on ? ' on' : ''}${lead ? ' marked' : ''}"
       data-tooth="${t}" role="button" tabindex="0" aria-label="${label}">
       <rect class="cell" x="${x + 1}" y="${top - (up ? PAD - 2 : 4)}" width="${W - 2}"
         height="${CROWN + OCCL + PAD + 6}" rx="7"/>
       ${place(`${pre}${kind}`, x + 3, crownY, W - 6, CROWN, mirror, up ? 1 : -1)}
+      ${tint}
       ${hasOcclusal(t)
         ? place(`${pre}occl-${kind}`, x + 3, occlY, W - 6, OCCL, mirror, up ? 1 : -1)
         : ''}
+      ${dotRow}
       <text class="num" x="${x + W / 2}" y="${up ? top - 5 : top + OCCL + CROWN + 16}">${t}</text>
     </g>`;
   }).join('');
@@ -2704,7 +2850,7 @@ function jawRow(numbers, { up, marks, selected, milk, top }) {
  * Отметка — подложка под зубом, а не перекраска самого зуба: рисунок залит
  * градиентами, и перекрасить его значит потерять и корень, и пульпу.
  */
-function toothChart({ marks = {}, selected = [], milk = false }) {
+function toothChart({ marks = {}, states = {}, selected = [], milk = false, dots = false }) {
   ensureSprite();
   const up = milk ? FDI.upperMilk : FDI.upper;
   const low = milk ? FDI.lowerMilk : FDI.lower;
@@ -2715,8 +2861,8 @@ function toothChart({ marks = {}, selected = [], milk = false }) {
 
   return `<svg class="chart" viewBox="0 0 ${width} ${height}" role="group" aria-label="Зубная карта">
     <line class="midline" x1="${width / 2}" y1="2" x2="${width / 2}" y2="${height - 2}"/>
-    <g>${jawRow(up, { up: true, marks, selected, milk, top: topRow })}</g>
-    <g>${jawRow(low, { up: false, marks, selected, milk, top: botRow })}</g>
+    <g>${jawRow(up, { up: true, marks, states, selected, milk, top: topRow, dots })}</g>
+    <g>${jawRow(low, { up: false, marks, states, selected, milk, top: botRow, dots })}</g>
   </svg>`;
 }
 
@@ -2730,10 +2876,11 @@ function toothChart({ marks = {}, selected = [], milk = false }) {
  * прокручивается вбок: 35px на зуб. Тридцать два зуба в ширину телефона с
  * запасом на промах не помещаются, и делать вид, что помещаются, хуже.
  */
-function chartCard({ marks = {}, selected = [], milk = false, note = '', wide = false }) {
-  const hasMilk = Object.keys(marks).some(isMilkTooth);
+function chartCard({ marks = {}, states = {}, selected = [], milk = false, note = '', wide = false, legend = true }) {
+  const hasMilk = [...Object.keys(marks), ...Object.keys(states)].some(isMilkTooth);
   return `<div class="card">
-    <div class="chart-wrap${wide ? ' wide' : ''}">${toothChart({ marks, selected, milk })}</div>
+    <div class="chart-wrap${wide ? ' wide' : ''}">${
+      toothChart({ marks, states, selected, milk, dots: wide })}</div>
     <div class="chart-legend">
       <span class="done"><i></i>лечили</span>
       <span class="sel"><i></i>выбран</span>
@@ -2842,7 +2989,12 @@ function recordList(entries, { amendable = false } = {}) {
  */
 async function patRecord() {
   spinner('Открываем карту…');
-  S.d.myRecord = (await api('/me/record').catch(() => ({ entries: [] }))).entries ?? [];
+  const [rec, teeth] = await Promise.all([
+    api('/me/record').catch(() => ({ entries: [] })),
+    api('/me/teeth').catch(() => ({ marks: [] })),
+  ]);
+  S.d.myRecord = rec.entries ?? [];
+  S.d.myTeeth = teeth.marks ?? [];
   S.d.recTooth = null;
   return drawPatRecord();
 }
@@ -2864,10 +3016,21 @@ function drawPatRecord() {
           cabinets.size > 1 ? ` · ${cabinets.size} ${plural(cabinets.size, 'кабинет', 'кабинета', 'кабинетов')}` : ''}`
       : 'пока пусто'}</span></header>
     <main>
-      ${roots.length ? `${chartCard({
-        marks: toothMarks(entries), selected: tooth ? [tooth] : [], milk: S.d.recMilk,
-        note: 'Закрашен зуб, который лечили. Нажмите на него — останутся только его записи.',
+      ${roots.length || (S.d.myTeeth ?? []).length ? `${chartCard({
+        marks: toothMarks(entries), states: byTooth(S.d.myTeeth), milk: S.d.recMilk,
+        selected: tooth ? [tooth] : [],
+        note: 'Цветом — что с зубом сейчас, по отметкам врача. Нажмите зуб — останутся только его записи.',
       })}
+      ${(S.d.myTeeth ?? []).length ? `<div class="card">
+        <div class="sectiontitle" style="margin-top:0">Что отмечено</div>
+        ${S.d.myTeeth.map((m) => `<div class="row">
+          <span><i class="swatch" style="background:${m.color}"></i>${esc(m.name)} · зуб ${esc(m.tooth)}
+            <br><span class="muted">${esc(m.cabinet)}${m.doctor ? `, ${esc(m.doctor)}` : ''}</span></span>
+          <span class="muted mono">${dateLabel(m.notedOn, { day: 'numeric', month: 'short' })}</span>
+        </div>`).join('')}
+        <div class="note">Отметки ставит врач на приёме. Изменить их вы не можете —
+        это его запись о том, что он видел.</div>
+      </div>` : ''}
       ${tooth ? `<div class="card ok"><div class="row">
         <span class="name">Зуб ${esc(tooth)}</span>
         <button class="mini" data-act="alltooth">Все зубы</button></div></div>` : ''}
@@ -2951,7 +3114,7 @@ async function patMy() {
    ══════════════════════════════════════════════════════════════════════════ */
 
 document.addEventListener('click', async (e) => {
-  const el = e.target.closest('[data-day],[data-week],[data-appt],[data-act],[data-service],[data-q],[data-tc],[data-svc],[data-date],[data-time],[data-tourgo],[data-city],[data-pick-cab],[data-cancel],[data-resched],[data-rtime],[data-tplan],[data-psvc],[data-tq],[data-trm],[data-tstage],[data-pmethod],[data-mplan],[data-wd],[data-add],[data-rm],[data-rmov],[data-rmline],[data-material],[data-batch],[data-unit],[data-pick],[data-wsvc],[data-reason],[data-patient],[data-visit],[data-free],[data-tab],[data-mode],[data-tpl],[data-plan],[data-amend],[data-tooth],[data-toothitem],[data-vsvc]');
+  const el = e.target.closest('[data-day],[data-week],[data-appt],[data-act],[data-service],[data-q],[data-tc],[data-svc],[data-date],[data-time],[data-tourgo],[data-city],[data-pick-cab],[data-cancel],[data-resched],[data-rtime],[data-tplan],[data-psvc],[data-tq],[data-trm],[data-tstage],[data-pmethod],[data-mplan],[data-wd],[data-add],[data-rm],[data-rmov],[data-rmline],[data-material],[data-batch],[data-unit],[data-pick],[data-wsvc],[data-reason],[data-patient],[data-visit],[data-free],[data-tab],[data-mode],[data-tpl],[data-plan],[data-amend],[data-tooth],[data-toothitem],[data-vsvc],[data-markcode],[data-markgroup],[data-clearmark]');
   if (!el) return;
   const d = el.dataset;
   haptic();
@@ -2983,6 +3146,34 @@ document.addEventListener('click', async (e) => {
     // а не по лишнему атрибуту на каждом из тридцати двух зубов.
     if (d.tooth) {
       const top = S.stack[S.stack.length - 1]?.[0];
+      // Экран отметок: выбрана отметка — ставим её, не выбрана — показываем,
+      // что на зубе уже есть. Это две разные задачи одного касания, и врач
+      // различает их тем, что сам перед этим выбрал отметку.
+      if (top === docTeeth) {
+        const t = S.d.teeth;
+        if (!t.pick) { t.tooth = t.tooth === d.tooth ? null : d.tooth; return drawDocTeeth(); }
+        const r = await api(`/doctor/patients/${t.patientId}/teeth`, {
+          method: 'POST', body: JSON.stringify({ tooth: d.tooth, code: t.pick }),
+        });
+        // Обновляем на месте, а не перезагружаем экран: врач ставит отметки
+        // подряд, и круг до Франкфурта на каждый зуб — это уже не работа.
+        const mark = t.palette.find((x) => x.code === r.code);
+        t.marks = [...t.marks.filter((m) => !(m.tooth === d.tooth && m.category === r.category)),
+          { ...mark, tooth: d.tooth, notedOn: localDate(), cabinet: S.d.me?.cabinet ?? '' }];
+        t.history = [{ ...mark, tooth: d.tooth, notedOn: localDate(),
+          cabinet: S.d.me?.cabinet ?? '' }, ...t.history];
+        haptic('soft');
+        // Пломба не отменяет кариес: это разные группы, и на одном зубе
+        // бывает и то и другое. Но чаще всё-таки вылечили — поэтому такой
+        // зуб раскрываем сразу, чтобы снять старую отметку было одно
+        // касание, а не поиск. Решает врач, не программа.
+        const mineNow = t.marks.filter((m) => m.tooth === d.tooth);
+        if (mineNow.some((m) => m.category === 'build')
+            && mineNow.some((m) => m.category === 'lesion')) {
+          t.tooth = d.tooth;
+        }
+        return drawDocTeeth();
+      }
       if (top === toothPick) {
         const p = S.d.pick;
         p.value = p.value.includes(d.tooth)
@@ -2994,6 +3185,25 @@ document.addEventListener('click', async (e) => {
       }
       S.d.recTooth = S.d.recTooth === d.tooth ? null : d.tooth;
       return top === docRecord ? drawDocRecord() : drawPatRecord();
+    }
+    if (d.markcode) {
+      S.d.teeth.pick = S.d.teeth.pick === d.markcode ? null : d.markcode;
+      S.d.teeth.tooth = null;
+      return drawDocTeeth();
+    }
+    if (d.markgroup) {
+      S.d.teeth.open = S.d.teeth.open === d.markgroup ? null : d.markgroup;
+      return drawDocTeeth();
+    }
+    if (d.clearmark) {
+      const t = S.d.teeth;
+      await api(`/doctor/patients/${t.patientId}/teeth`, {
+        method: 'POST', body: JSON.stringify({ tooth: t.tooth, category: d.clearmark }),
+      });
+      t.marks = t.marks.filter((m) => !(m.tooth === t.tooth && m.category === d.clearmark));
+      t.history = [{ code: null, tooth: t.tooth, notedOn: localDate(),
+        cabinet: S.d.me?.cabinet ?? '' }, ...t.history];
+      return drawDocTeeth();
     }
     if (d.toothitem !== undefined) {
       readPlanForm();
@@ -3230,6 +3440,9 @@ document.addEventListener('click', async (e) => {
         return docListing();
       }
       case 'record': S.d.recTooth = null; return go(docRecord, S.d.patient.id);
+      case 'teeth': S.d.teeth = null; return go(docTeeth, S.d.patient.id);
+      case 'unfocus': S.d.teeth.tooth = null; return drawDocTeeth();
+      case 'dropmark': S.d.teeth.pick = null; return drawDocTeeth();
       case 'alltooth': {
         S.d.recTooth = null;
         return S.stack[S.stack.length - 1]?.[0] === docRecord ? drawDocRecord() : drawPatRecord();
@@ -3239,6 +3452,7 @@ document.addEventListener('click', async (e) => {
         // меняет чем выбирать, на карте — что показывать.
         const top = S.stack[S.stack.length - 1]?.[0];
         if (top === toothPick) { S.d.pick.milk = !!d.on; return drawToothPick(); }
+        if (top === docTeeth) { S.d.teeth.milk = !!d.on; return drawDocTeeth(); }
         S.d.recMilk = !!d.on;
         return top === docRecord ? drawDocRecord() : drawPatRecord();
       }

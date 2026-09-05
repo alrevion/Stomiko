@@ -228,6 +228,22 @@ app.get('/api/me/record', async (c) => {
 });
 
 /**
+ * Своя зубная карта: что с зубами сейчас, по отметкам всех кабинетов.
+ *
+ * Только чтение: состояние зубов ставит врач, а не пациент. Палитра нужна и
+ * здесь — без неё «filling» так и осталось бы словом «filling».
+ */
+app.get('/api/me/teeth', async (c) => {
+  const sb = c.get('sb');
+  const [chart, palette] = await Promise.all([
+    sb.rpc('my_tooth_chart', { p_subject: c.get('identity').subject }),
+    sb.rpc('mark_palette', {}),
+  ]);
+  if (chart.error) return c.json({ error: chart.error.message }, 500);
+  return c.json({ ...(chart.data as object), palette: palette.data ?? [] });
+});
+
+/**
  * Куда можно перенести — и сам перенос.
  *
  * Оба маршрута сквозные, как отмена: человек лечится в нескольких кабинетах,
