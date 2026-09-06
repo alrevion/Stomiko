@@ -430,11 +430,10 @@ function askContact() {
  */
 function profileScreen(first = false) {
   const me = S.d.me ?? {};
-  const placed = me.lat != null;
   render(`
     <header><h1>${first ? 'Давайте познакомимся' : 'Ваши данные'}</h1>
       <span class="sub">${first
-        ? 'три поля, и больше их никто не спросит'
+        ? 'спросим один раз, дальше подставится само'
         : 'меняются в любой момент'}</span></header>
     <main>
       <div class="card">
@@ -455,6 +454,20 @@ function profileScreen(first = false) {
           me.phone ? 'Отправить другой номер' : 'Поделиться номером'}</button>
       </div>
 
+      ${first ? '' : placeCard()}
+    </main>
+    <button class="primary" data-act="saveprofile" data-first="${first ? 1 : 0}">${
+      first ? 'Дальше' : 'Сохранить'}</button>
+  `);
+}
+
+/**
+ * Карточка места. Одна и та же в профиле и на шаге знакомства: человек
+ * читает про геопозицию ровно один текст, где бы её ни включал.
+ */
+function placeCard() {
+  const placed = S.d.me?.lat != null;
+  return `
       <div class="card">
         <div class="row"><span class="muted">Где вы находитесь</span>
           <span class="name">${placed ? 'определено' : 'не отправлено'}</span></div>
@@ -470,10 +483,57 @@ function profileScreen(first = false) {
           S.d.geo === 'запрещено' ? 'geosettings' : 'myplace'}">${
           S.d.geo === 'запрещено' ? 'Открыть настройки Telegram'
             : placed ? 'Отправить другое место' : 'Отправить своё место'}</button>`}
+      </div>`;
+}
+
+/**
+ * Кем человек пришёл.
+ *
+ * Вопрос задаётся ПОСЛЕ имени и номера, а не вместо них: раньше он стоял
+ * первым экраном платформы, и человек с рекламы, пришедший записаться к
+ * стоматологу, начинал знакомство с выбора профессии.
+ *
+ * Ответ ничего не запирает: пациент в любой момент заводит кабинет из «Ещё»,
+ * врач смотрит на себя как на пациента из «Кабинета». Он лишь решает, что
+ * спросить следующим — место (пациенту, чтобы найти ближних) или кабинет
+ * (врачу, которому место ни к чему: у кабинета свой адрес).
+ */
+function roleScreen() {
+  render(`
+    <header><h1>Кем вы пришли?</h1>
+      <span class="sub">это не навсегда — переключиться можно в любой момент</span></header>
+    <main>
+      <div class="picker">
+        <button data-act="aspatient"><div class="name">Я пациент</div>
+          <div class="price">найти стоматолога, записаться, вести свою зубную карту</div></button>
+        <button data-act="asdoctor"><div class="name">Я врач</div>
+          <div class="price">завести свой кабинет или войти по приглашению коллеги</div></button>
+      </div>
+      <div class="card">
+        <div class="note" style="margin:0">Врач — тоже чей-то пациент. Оба раздела
+        останутся при вас, вопрос только в том, с чего начать.</div>
       </div>
     </main>
-    <button class="primary" data-act="saveprofile" data-first="${first ? 1 : 0}">${
-      first ? 'Сохранить и продолжить' : 'Сохранить'}</button>
+  `);
+}
+
+/**
+ * Где человек находится. Отдельный шаг и только для пациента: врачу место
+ * ни к чему — у кабинета есть свой адрес, который он укажет сам.
+ */
+function placeScreen() {
+  render(`
+    <header><h1>Где вы находитесь?</h1>
+      <span class="sub">чтобы показать ближайших к вам стоматологов</span></header>
+    <main>
+      ${placeCard()}
+      <div class="card">
+        <div class="note" style="margin:0">Точка нужна только поиску. Адрес не
+        сохраняется и никому не показывается, а врач видит его, только когда
+        вы к нему записались.</div>
+        <button class="mini" data-act="skipplace">Пропустить</button>
+      </div>
+    </main>
   `);
 }
 
@@ -3753,6 +3813,13 @@ document.addEventListener('click', async (e) => {
         S.d.me = { ...S.d.me, ...await api('/me/profile',
           { method: 'PUT', body: JSON.stringify({ ...point, ...draft }) }) };
         toast('Место сохранено');
+        // На шаге знакомства место — последний вопрос: отправил и попал в
+        // приложение. Лишнее «Готово» после уже нажатой кнопки — лишний шаг.
+        if (S.stack[S.stack.length - 1]?.[0] === placeScreen) {
+          setTabs(S.d.me.mode);
+          S.stack = [];
+          return go(TABS[0].fn);
+        }
         return refresh();
       }
       case 'geosettings': {
@@ -3783,11 +3850,14 @@ document.addEventListener('click', async (e) => {
           { method: 'PUT', body: JSON.stringify({ fullName: name }) }) };
         S.d.draftName = null;
         if (d.first !== '1') { toast('Сохранено'); return back(); }
+        return go(roleScreen);
+      }
+      case 'aspatient': return go(placeScreen);
+      case 'skipplace': {
         // Знакомство кончается пациентом — даже у того, у кого есть кабинет.
-        // Спрашивали про ЧЕЛОВЕКА: имя, номер, место. Высадить его после
-        // этого сразу в кресло врача — ответить не на тот вопрос. Кабинет
-        // никуда не делся: он в «Ещё» → «Вернуться в кабинет», и следующий
-        // вход снова откроется там, где человек закончил.
+        // Спрашивали про ЧЕЛОВЕКА, и высадить его сразу в кресло врача
+        // значит ответить не на тот вопрос. Кабинет никуда не делся: он в
+        // «Ещё» → «Вернуться в кабинет».
         if (S.d.me.mode !== 'patient') {
           await api('/me/mode', { method: 'POST', body: JSON.stringify({ mode: 'patient' }) });
           S.d.me = await api('/me');
@@ -3797,6 +3867,7 @@ document.addEventListener('click', async (e) => {
         S.stack = [];
         return go(TABS[0].fn);
       }
+      case 'asdoctor': return go(doctorEntry);
       case 'dangerzone': {
         const scale = await api('/doctor/cabinet/scale');
         const owner = scale.role === 'owner';
