@@ -19,6 +19,28 @@ const tg = window.Telegram?.WebApp;
 tg?.ready();
 tg?.expand();
 
+/* ── Клавиатура ──────────────────────────────────────────────────────────
+   На телефоне поле в фокусе поднимает клавиатуру, и окно на мгновение
+   сжимается до полоски над ней. Главная кнопка закреплена у низа окна — и
+   за это мгновение она подпрыгивала на середину экрана, накрывая то самое
+   поле, в которое человек только что нажал. Пока он печатает, кнопка ему не
+   нужна: прячем её (см. body.typing в app.css) и возвращаем, когда поле
+   отпустили. Только для пальца: на десктопе клавиатуры нет, и спрятанная
+   кнопка была бы уже дефектом.
+   ponytail: на Android «назад» закрывает клавиатуру, не снимая фокус, —
+   кнопка вернётся по нажатию в любое место экрана; следить за высотой
+   visualViewport, если это станет жалобой. */
+{
+  // Палец проверяется в момент нажатия, а не при загрузке: Telegram Desktop
+  // с подключённым тачскрином меняет это на ходу.
+  const typing = (e, on) => {
+    if (!e.target?.matches?.('input, textarea, select')) return;
+    document.body.classList.toggle('typing', on && matchMedia('(pointer: coarse)').matches);
+  };
+  document.addEventListener('focusin', (e) => typing(e, true));
+  document.addEventListener('focusout', (e) => typing(e, false));
+}
+
 // Тема пришла от клиента — значит своими тёмными значениями подменять её
 // нельзя ни в одном поле: получится смесь из двух палитр.
 if (tg?.themeParams?.bg_color) document.documentElement.dataset.tg = 'on';
@@ -388,7 +410,7 @@ function profileScreen(first = false) {
         подставляем: там ник, а не ФИО.</div>
       </div>
 
-      <div class="card">
+      <div class="card" id="phonecard">
         <div class="row"><span class="muted">Телефон</span>
           <span class="name mono">${me.phone ? esc(me.phone) : 'не подтверждён'}</span></div>
         <div class="note">${me.phone
@@ -415,9 +437,8 @@ function profileScreen(first = false) {
             : placed ? 'Отправить другое место' : 'Отправить своё место'}</button>`}
       </div>
     </main>
-    <button class="primary" data-act="saveprofile" data-first="${first ? 1 : 0}"
-      ${first && !me.phone ? 'disabled' : ''}>${
-      !first ? 'Сохранить' : me.phone ? 'Продолжить' : 'Сначала номер телефона'}</button>
+    <button class="primary" data-act="saveprofile" data-first="${first ? 1 : 0}">${
+      first ? 'Сохранить и продолжить' : 'Сохранить'}</button>
   `);
   if (first) setTimeout(() => document.getElementById('myname')?.focus(), 80);
 }
@@ -3705,6 +3726,16 @@ document.addEventListener('click', async (e) => {
       case 'saveprofile': {
         const name = val('myname');
         if (name.length < 2) return toast('Как вас записывать в карту?', true);
+        if (d.first === '1' && !S.d.me?.phone) {
+          // Кнопку с условием в подписи никто не читает — нажимают, и всё.
+          // Поэтому условие объясняется после нажатия и там, где его
+          // выполняют: карточка номера подъезжает под палец и мигает.
+          keepTyped();
+          const card = document.getElementById('phonecard');
+          card?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          card?.classList.remove('attn'); void card?.offsetWidth; card?.classList.add('attn');
+          return toast('Сначала поделитесь номером — без него в системе не зарегистрироваться', true);
+        }
         el.disabled = true;
         S.d.me = { ...S.d.me, ...await api('/me/profile',
           { method: 'PUT', body: JSON.stringify({ fullName: name }) }) };

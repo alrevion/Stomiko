@@ -18,6 +18,36 @@
  *     ритме, и целиком отключаются по prefers-reduced-motion.
  */
 
+/* Шрифт свой, а не системный.
+ *
+ * Системный на iOS — SF, на Android — Roboto, в Telegram Desktop — что
+ * угодно: одно и то же приложение выглядело тремя разными. Inter — тот же,
+ * что в остальных продуктах Alrevion: узнаваемость между ними важнее, чем
+ * слияние с чужой платформой. Переменное начертание (одно на 400–800) и
+ * только нужные подмножества; unicode-range заставляет браузер тянуть
+ * кириллицу, только если она на странице есть. Файлы — из Ijoda.
+ */
+@font-face {
+  font-family: "Inter"; font-style: normal; font-weight: 400 800; font-display: swap;
+  src: url("/fonts/inter-cyrillic-ext.woff2") format("woff2");
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+@font-face {
+  font-family: "Inter"; font-style: normal; font-weight: 400 800; font-display: swap;
+  src: url("/fonts/inter-cyrillic.woff2") format("woff2");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: "Inter"; font-style: normal; font-weight: 400 800; font-display: swap;
+  src: url("/fonts/inter-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Inter"; font-style: normal; font-weight: 400 800; font-display: swap;
+  src: url("/fonts/inter-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 :root {
   color-scheme: light dark;
 
@@ -81,14 +111,21 @@
   --s1: 4px;  --s2: 8px;  --s3: 12px; --s4: 16px;
   --s5: 20px; --s6: 24px; --s7: 32px; --s8: 44px;
 
-  --r-sm: 10px;
-  --r: 14px;
-  --r-lg: 20px;
+  /* Три ступени скругления, как в Ijoda и PMS: мелкое — для чипов и
+     переключателей, обычное — для карточек, крупное — для листов. Всё, что
+     нажимают или заполняют одной строкой, — капсула: кнопка и поле в форме
+     таблетки читаются как «нажми меня» без единого слова. */
+  --r-sm: 12px;
+  --r: 16px;
+  --r-lg: 22px;
   --r-pill: 999px;
 
   --shadow-1: 0 1px 2px color-mix(in srgb, var(--text-base) 7%, transparent);
   --shadow-2: 0 4px 16px color-mix(in srgb, var(--text-base) 10%, transparent);
   --shadow-3: 0 10px 32px color-mix(in srgb, var(--text-base) 16%, transparent);
+  /* Тень главной кнопки — цветом самой кнопки, а не серым: серая тень под
+     синей кнопкой выглядит грязью, цветная — свечением. */
+  --shadow-cta: 0 8px 24px color-mix(in srgb, var(--accent) 32%, transparent);
 
   /* Тап-цель. 48 — комфорт, 44 — абсолютный минимум по HIG. */
   --tap: 48px;
@@ -150,7 +187,8 @@
 
 body {
   margin: 0;
-  font: 16px/1.5 -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, 'Segoe UI', Roboto, sans-serif;
+  font: 16px/1.5 "Inter", -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
   background: var(--bg);
   color: var(--label);
   /* Убирает 300 мс задержку тапа, не отключая масштабирование. */
@@ -188,9 +226,9 @@ header {
 }
 header h1 {
   margin: 0;
-  font-size: 26px;
+  font-size: 28px;
   font-weight: 800;
-  letter-spacing: -0.5px;
+  letter-spacing: -0.02em;
   line-height: 1.15;
 }
 header .sub {
@@ -230,12 +268,24 @@ main { padding: 0 var(--s3) var(--s2); }
 /* ══ Карточка ═══════════════════════════════════════════════════════════*/
 .card {
   background: var(--surface);
+  /* Рамка и тень вместе: на светлой теме карточка от полотна отличается на
+     одну ступень серого, и без них лежала плоским пятном. */
+  border: 1px solid var(--hair);
   border-radius: var(--r);
   padding: var(--s4);
   margin-bottom: var(--s3);
+  box-shadow: var(--shadow-1);
 }
-.card.ok   { box-shadow: inset 3px 0 0 var(--ok); }
-.card.warn { box-shadow: inset 3px 0 0 var(--warn); }
+.card.ok   { box-shadow: inset 3px 0 0 var(--ok), var(--shadow-1); }
+.card.warn { box-shadow: inset 3px 0 0 var(--warn), var(--shadow-1); }
+/* Карточка, к которой нужно привлечь взгляд: человек нажал «продолжить»,
+   не отдав номер, — а нужный ему блок выше, за клавиатурой. Два удара
+   акцентом по рамке вместо тоста, которого он не прочитает. */
+@keyframes attn {
+  0%, 100% { box-shadow: 0 0 0 0 var(--accent-soft), var(--shadow-1); }
+  50%      { box-shadow: 0 0 0 8px var(--accent-soft), var(--shadow-1); }
+}
+.card.attn { border-color: var(--accent); animation: attn 700ms var(--ease) 2; }
 .muted-card { opacity: .55; }
 
 .row {
@@ -294,14 +344,28 @@ button { font: inherit; }
   z-index: 30;
   min-height: 54px;
   border: 0;
-  border-radius: var(--r);
+  border-radius: var(--r-pill);
   background: var(--accent);
   color: var(--accent-fg);
   font-size: 17px;
   font-weight: 650;
   letter-spacing: .1px;
-  box-shadow: var(--shadow-2);
+  box-shadow: var(--shadow-cta);
   transition: transform var(--dur-press) var(--ease), opacity var(--dur-press);
+}
+/* Пока человек печатает, главной кнопки нет.
+
+   Кнопка закреплена у низа окна, а окно при появлении клавиатуры на
+   мгновение сжимается до полоски над ней — и кнопка прыгала на середину
+   экрана, накрывая то самое поле, в которое человек только что нажал.
+   Печатающему она не нужна: он вернётся к ней, закрыв клавиатуру. Флаг
+   ставит app.js по фокусу в поле и только там, где есть палец. */
+body.typing .primary,
+body.typing.has-cta::after {
+  opacity: 0;
+  transform: translateY(24px);
+  pointer-events: none;
+  transition: transform var(--dur-out) var(--ease), opacity var(--dur-out);
 }
 /* Главное действие раздела и навигация не спорят за один и тот же низ:
    кнопка встаёт НАД доком, а не поверх него. Две панели друг на друге —
@@ -338,7 +402,7 @@ body.has-cta::after {
   min-height: var(--s8);
   padding: 0 var(--s4);
   border: 1px solid var(--sep);
-  border-radius: var(--r-sm);
+  border-radius: var(--r-pill);
   background: transparent;
   color: var(--link);
   font-size: 15px;
@@ -545,17 +609,24 @@ body.has-cta::after {
 /* ══ Формы ══════════════════════════════════════════════════════════════*/
 .fieldlabel {
   display: block;
-  margin: var(--s3) 0 6px;
-  font-size: 13px;
-  font-weight: 650;
-  color: var(--label-2);
+  margin: var(--s3) 0 var(--s2) var(--s1);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--label-3);
 }
 .field {
+  /* Сброс системного оформления обязателен: на iOS собственный стиль поля
+     возвращается при фокусе и перебивает скругление — капсула на глазах
+     становилась прямоугольником. Повторён и на :focus ниже. */
+  -webkit-appearance: none;
+  appearance: none;
   width: 100%;
-  min-height: var(--tap);
-  padding: var(--s3) var(--s4);
+  min-height: 52px;
+  padding: 14px 18px;
   border: 1px solid var(--sep);
-  border-radius: var(--r-sm);
+  border-radius: var(--r-pill);
   background: var(--bg);
   color: var(--label);
   /* 16px обязательно: меньше — и iOS зумит страницу при фокусе. */
@@ -568,10 +639,19 @@ body.has-cta::after {
 }
 .field:focus {
   outline: none;
+  -webkit-appearance: none;
+  appearance: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
-textarea.field { min-height: 88px; resize: vertical; }
+input.field:focus { border-radius: var(--r-pill); }
+/* Многострочное поле капсулой не бывает: у него есть углы текста. */
+textarea.field, textarea.field:focus {
+  min-height: 88px;
+  padding: var(--s3) var(--s4);
+  border-radius: var(--r-lg);
+  resize: vertical;
+}
 
 .num {
   width: 84px;
@@ -908,7 +988,7 @@ td { padding: var(--s2) 0; border-top: 1px solid var(--hair); vertical-align: to
   flex: 1;
   min-height: 50px;
   border: 0;
-  border-radius: var(--r);
+  border-radius: var(--r-pill);
   font-size: 17px;
   font-weight: 650;
   transition: transform var(--dur-press) var(--ease);
@@ -1012,10 +1092,16 @@ td { padding: var(--s2) 0; border-top: 1px solid var(--hair); vertical-align: to
   min-height: var(--tap);
   margin-top: var(--s3);
   border: 1px solid var(--sep);
-  border-radius: var(--r-sm);
+  border-radius: var(--r-pill);
   background: var(--bg);
   color: var(--accent);
   font-size: 15px;
   font-weight: 650;
+  transition: background var(--dur-press), transform var(--dur-press) var(--ease);
 }
+.ghost:active { transform: scale(.975); }
 .ghost:active { background: var(--fill); }
+
+@media (prefers-reduced-motion: reduce) {
+  .card.attn { animation: none; }
+}
