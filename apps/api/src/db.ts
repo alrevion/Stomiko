@@ -39,6 +39,13 @@ export interface Env {
   SUPABASE_JWT_SECRET?: string;
   SUPABASE_ANON_KEY?: string;
   MINIAPP_URL?: string;
+  /**
+   * Кто на платформе проверяет лицензии врачей. Список подписанных Telegram
+   * subject через запятую («tg:123,tg:456»). Списком, а не таблицей: людей
+   * тут единицы, и хранить их рядом с кабинетами значит однажды дать
+   * кабинету право самому себя проверить.
+   */
+  PLATFORM_OWNERS?: string;
   ASSETS: { fetch: (req: Request) => Promise<Response> };
 }
 
@@ -227,6 +234,14 @@ export interface Identity {
   /** Состояние знакомства с кабинетом: активно ли и какие экраны пройдены. */
   onboarding: { active: boolean; seen: string[] } | null;
   catalogReviewed: boolean;
+  /** Проверяет лицензии врачей: работа платформы, а не кабинета. */
+  isPlatformOwner: boolean;
+}
+
+/** Значится ли человек в списке проверяющих платформы. */
+export function isPlatformOwner(env: Env, subject: string): boolean {
+  return (env.PLATFORM_OWNERS ?? '')
+    .split(',').map((s) => s.trim()).filter(Boolean).includes(subject);
 }
 
 interface UserContext {
@@ -277,6 +292,9 @@ export async function resolveIdentity(
     needsChoice: false,
     onboarding: null,
     catalogReviewed: false,
+    // Ставится в воркере по списку из настроек: база про платформу не знает
+    // и знать не должна.
+    isPlatformOwner: false,
   };
   const asCabinet = (c: Cabinet, mode: 'patient' | 'doctor'): Identity => ({
     ...base, mode, tenantId: c.tenantId, tenantName: c.name, publicToken: c.token,

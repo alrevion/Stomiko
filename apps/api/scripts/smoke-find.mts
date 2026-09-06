@@ -34,7 +34,23 @@ ok(r1.status === 200 && r2.status === 200, 'кабинеты созданы');
 await open('/onboarding/finish', { method:'POST' });
 await shut('/onboarding/finish', { method:'POST' });
 
+// Публикация теперь требует проверенной лицензии: кабинет в поиске — это
+// совет платформы незнакомому человеку, и он должен быть проверен. Здесь
+// проходим тот же путь, что и живой врач: подал номер — проверяющий сверил.
+const checker = as(Number(env('PLATFORM_OWNERS').replace('tg:', '')));
+const licensed = async (who: ReturnType<typeof as>, tenantId: string, number: string) => {
+  await who('/doctor/license', { method: 'PUT', body: JSON.stringify({ number }) });
+  return checker(`/admin/licenses/${tenantId}`, { method: 'POST',
+    body: JSON.stringify({ verdict: 'verified', validUntil: '2030-01-01' }) });
+};
+
 console.log('\n── Публикация ──');
+const noLicense = await open('/doctor/listing', { method:'PUT', body: JSON.stringify({
+  city:'Ташкент', address:'ул. Амира Темура, 12', phone:'+998901112233', listed:true }) });
+ok(noLicense.status === 400, 'без проверенной лицензии в поиск не пускают',
+  String(noLicense.body.error ?? ''));
+ok((await licensed(open, t1, '47895138')).status === 200, 'лицензия первого кабинета проверена');
+ok((await licensed(shut, t2, '47895139')).status === 200, 'лицензия второго кабинета проверена');
 const bad = await open('/doctor/listing', { method:'PUT', body: JSON.stringify({ listed: true }) });
 ok(bad.status === 400, 'без города, адреса и телефона опубликовать нельзя', String(bad.body.error ?? ''));
 const good = await open('/doctor/listing', { method:'PUT', body: JSON.stringify({

@@ -660,6 +660,8 @@ async function docListing() {
           свой кабинет. Порядок в списке — по ближайшему свободному времени;
           платных мест нет.</div>
         </div>
+
+        ${licenseCard(l)}
         <div class="card">
           <label class="fieldlabel">Город</label>
           <input class="field" id="lcity" value="${esc(l.city ?? '')}" placeholder="Ташкент">
@@ -688,8 +690,11 @@ async function docListing() {
         <div class="stockrow" id="lpreview">${listingPreview()}</div>
       </main>
       <button class="primary ${l.listed ? 'danger' : ''}" data-act="savelisting"
-        data-listed="${l.listed ? '0' : '1'}" ${!ready && !l.listed ? 'disabled' : ''}>
-        ${l.listed ? 'Убрать из поиска' : ready ? 'Показывать в поиске' : 'Заполните город, адрес и телефон'}</button>
+        data-listed="${l.listed ? '0' : '1'}"
+        ${!l.listed && (!ready || l.licenseStatus !== 'verified') ? 'disabled' : ''}>
+        ${l.listed ? 'Убрать из поиска'
+          : l.licenseStatus !== 'verified' ? 'Нужна проверенная лицензия'
+          : ready ? 'Показывать в поиске' : 'Заполните город, адрес и телефон'}</button>
     `);
     // Ввод не вызывает перерисовку — иначе поле теряло бы фокус на каждой
     // букве. Поэтому состояние читается на каждый ввод, а меняются ровно две
@@ -702,6 +707,102 @@ async function docListing() {
   };
   S.d.redraw = () => { readListingForm(); draw(); };
   draw();
+}
+
+/**
+ * Лицензия.
+ *
+ * Стоит выше адреса и телефона намеренно: без неё остальное не имеет
+ * смысла — кабинет в поиск всё равно не попадёт. Проверка сегодня ручная,
+ * и врачу об этом сказано прямо: обещать мгновенный ответ, а отвечать через
+ * час — худший из вариантов.
+ */
+function licenseCard(l) {
+  const st = l.licenseStatus ?? 'none';
+  const label = { none: 'не указана', pending: 'на проверке',
+    verified: 'проверена', rejected: 'не подтверждена' }[st];
+  return `
+        <div class="card ${st === 'rejected' ? 'warn' : ''}">
+          <div class="row"><span class="muted">Лицензия</span>
+            <span class="name">${label}</span></div>
+          ${st === 'verified' ? `<div class="row"><span class="muted">Номер</span>
+            <span class="mono">${esc(l.licenseNumber ?? '')}</span></div>
+            ${l.licenseValidUntil ? `<div class="row"><span class="muted">Действует до</span>
+              <span class="mono">${dateLabel(l.licenseValidUntil)}</span></div>` : ''}` : ''}
+          <div class="note">${
+            st === 'verified'
+              ? 'Мы сверили номер с реестром Минюста. Пациенты видят отметку «документы проверены» — это главный довод в вашу пользу против безымянных объявлений.'
+              : st === 'pending'
+                ? `Номер ${esc(l.licenseNumber ?? '')} принят и ждёт сверки с реестром. Обычно это занимает несколько часов; ответ придёт сюда, в чат.`
+                : st === 'rejected'
+                  ? esc(l.licenseNote || 'Номер не нашёлся в реестре. Проверьте и пришлите заново.')
+                  : 'Чтобы попасть в поиск, назовите номер лицензии на медицинскую деятельность. Мы сверим его с реестром Минюста. Без поиска кабинет работает как обычно — по вашей ссылке.'}</div>
+          ${st === 'verified' ? '' : `
+          <label class="fieldlabel">Номер лицензии</label>
+          <input class="field" id="licnum" value="${esc(l.licenseNumber ?? '')}"
+            placeholder="47895138" inputmode="text" autocomplete="off">
+          <label class="fieldlabel">СТИР или ЖШШИР — необязательно</label>
+          <input class="field" id="lictin" value="${esc(l.licenseTin ?? '')}"
+            placeholder="304638816" inputmode="numeric" autocomplete="off">
+          <div class="note">СТИР ускоряет сверку: по нему запись в реестре
+          находится, даже если номер записан иначе.</div>
+          <button class="mini" data-act="sendlicense">${
+            st === 'pending' ? 'Прислать другой номер' : 'Отправить на проверку'}</button>`}
+        </div>`;
+}
+
+/**
+ * Очередь проверки лицензий — экран владельца платформы.
+ *
+ * Ссылка ведёт в реестр Минюста с уже подставленным номером: решение
+ * принимается по официальному источнику, а не по нашему списку. Программно
+ * реестр закрыт (Turnstile), и обходить это нельзя — поэтому глазами.
+ * Когда появится официальный доступ, экран останется, а сверка станет
+ * автоматической.
+ */
+async function adminLicenses() {
+  spinner('Загрузка…');
+  const { pending } = await api('/admin/licenses');
+  S.d.pending = pending;
+  render(`
+    <header><h1>Проверка лицензий</h1>
+      <span class="sub">${pending.length
+        ? `${pending.length} ${plural(pending.length, 'заявка ждёт', 'заявки ждут', 'заявок ждут')}`
+        : 'очередь пуста'}</span></header>
+    <main>
+      ${pending.length ? pending.map((x) => `
+        <div class="card">
+          <div class="row"><span class="name">${esc(x.name)}</span>
+            <span class="muted">${dateLabel(String(x.submittedAt).slice(0, 10))}</span></div>
+          <div class="row"><span class="muted">Врач</span>
+            <span>${esc(x.doctor ?? '—')}</span></div>
+          <div class="row"><span class="muted">Адрес</span>
+            <span>${esc([x.city, x.address].filter(Boolean).join(', ') || '—')}</span></div>
+          <div class="row"><span class="muted">Телефон</span>
+            <span class="mono">${esc(x.phone ?? '—')}</span></div>
+          <div class="row"><span class="muted">Лицензия</span>
+            <span class="mono name">${esc(x.licenseNumber)}</span></div>
+          ${x.licenseTin ? `<div class="row"><span class="muted">СТИР</span>
+            <span class="mono">${esc(x.licenseTin)}</span></div>` : ''}
+          <div class="note">Откройте реестр, найдите запись и посмотрите три вещи:
+          вид деятельности — медицинская, состояние — действующая, срок — не истёк.</div>
+          <button class="mini" data-open-registry="${esc(x.licenseNumber)}">Открыть реестр</button>
+          <label class="fieldlabel">Действует до</label>
+          <input class="field" type="date" id="lic-until-${x.tenantId}">
+          <div class="picker" style="margin-top:12px">
+            <button data-verdict="verified" data-tenant="${x.tenantId}">
+              <div class="name">Подтвердить</div>
+              <div class="price">кабинет сможет показываться в поиске</div></button>
+            <button data-verdict="rejected" data-tenant="${x.tenantId}">
+              <div class="name">Отклонить</div>
+              <div class="price">спросим причину — врач её прочитает</div></button>
+          </div>
+        </div>`).join('')
+      : `<div class="card"><div class="note" style="margin:0">Никто не ждёт проверки.
+          Заявки появляются здесь, как только врач называет номер лицензии на
+          экране «Показ в поиске».</div></div>`}
+    </main>
+  `);
 }
 
 /** Предпросмотр карточки: ровно то, что увидят посторонние. */
@@ -736,6 +837,9 @@ function readListingForm() {
   if (!l) return;
   l.city = val('lcity'); l.address = val('laddr');
   l.landmark = val('lland'); l.phone = val('lphone');
+  if (document.getElementById('licnum')) {
+    l.licenseNumber = val('licnum'); l.licenseTin = val('lictin');
+  }
 }
 
 /**
@@ -2107,6 +2211,12 @@ async function docMenu() {
           <div class="price">срок и продление</div></button>
       </div>
 
+      ${S.d.me?.isPlatformOwner ? `<div class="sectiontitle">Платформа</div>
+      <div class="picker">
+        <button data-act="adminlic"><div class="name">Проверка лицензий</div>
+          <div class="price">кабинеты, которые просятся в поиск</div></button>
+      </div>` : ''}
+
       <div class="sectiontitle">Кто вы сейчас</div>
       <div class="picker">
         <button data-act="switcher"><div class="name">Вы в кабинете как врач</div>
@@ -3404,6 +3514,12 @@ async function patMore() {
           <div class="price">по городу, названию или ориентиру</div></button>
       </div>
 
+      ${me.isPlatformOwner ? `<div class="sectiontitle">Платформа</div>
+      <div class="picker">
+        <button data-act="adminlic"><div class="name">Проверка лицензий</div>
+          <div class="price">кабинеты, которые просятся в поиск</div></button>
+      </div>` : ''}
+
       <div class="sectiontitle">Ваши данные</div>
       <div class="picker">
         <button data-act="profile"><div class="name">ФИО, номер и место</div>
@@ -3492,6 +3608,34 @@ document.addEventListener('click', async (e) => {
 
   try {
     if (d.tab !== undefined) return goTab(Number(d.tab));
+    if (d.openRegistry) {
+      // Номер подставлен в фильтр реестра; поиск в нём человек запускает сам —
+      // страница защищена от программных обращений, и это её право.
+      const url = `https://license.gov.uz/registry?filter%5Bnumber%5D=${
+        encodeURIComponent(d.openRegistry)}`;
+      tg?.openLink ? tg.openLink(url) : window.open(url, '_blank');
+      return;
+    }
+    if (d.verdict) {
+      const until = val(`lic-until-${d.tenant}`);
+      let note = null;
+      if (d.verdict === 'rejected') {
+        const ok = await ask({
+          title: 'Отклонить заявку?',
+          body: `Врач прочитает причину и сможет прислать номер заново.
+                 Без причины отказ читается как произвол.`,
+          confirm: 'Отклонить',
+        });
+        if (!ok) return;
+        note = 'Номер не найден в реестре или лицензия не действует. Проверьте номер и пришлите заново.';
+      } else if (!until) {
+        return toast('Укажите, до какой даты действует лицензия', true);
+      }
+      await api(`/admin/licenses/${d.tenant}`, { method: 'POST', body: JSON.stringify({
+        verdict: d.verdict, validUntil: until || null, note }) });
+      toast(d.verdict === 'verified' ? 'Лицензия подтверждена' : 'Заявка отклонена');
+      return adminLicenses();
+    }
     if (d.mode) {
       await api('/me/mode', { method: 'POST', body: JSON.stringify({ mode: d.mode, tenantId: d.tenant }) });
       // Режим меняет ВЕСЬ набор экранов, поэтому перечитываем себя целиком.
@@ -3904,6 +4048,20 @@ document.addEventListener('click', async (e) => {
         return go(TABS[0].fn);
       }
       case 'listing': return go(docListing);
+      case 'adminlic': return go(adminLicenses);
+      case 'sendlicense': {
+        readListingForm();
+        const num = val('licnum');
+        if (num.length < 4) return toast('Номер слишком короткий — его не найти в реестре', true);
+        el.disabled = true;
+        const r = await api('/doctor/license', { method: 'PUT', body: JSON.stringify({
+          number: num, tin: val('lictin') }) });
+        // Подача снимает кабинет с поиска: отметка «проверено» не должна
+        // пережить документ, к которому она относилась.
+        S.d.listing = { ...S.d.listing, ...r, listed: false };
+        toast('Отправлено на проверку — ответ придёт в чат');
+        return docListing();
+      }
       case 'cabplace': {
         el.disabled = true;
         el.textContent = 'Определяем…';
@@ -3923,6 +4081,8 @@ document.addEventListener('click', async (e) => {
         const r = await api('/doctor/listing', { method: 'PUT', body: JSON.stringify({
           city: l.city, address: l.address, landmark: l.landmark, phone: l.phone,
           listed: d.listed === '1', lat: l.lat, lon: l.lon }) });
+        // Ответ несёт состояние лицензии: если врач подал новый номер из
+        // другого окна, кнопка тут же станет «нужна проверенная лицензия».
         S.d.listing = { ...l, ...r, listed: Boolean(r.listed) };
         toast(r.listed ? 'Кабинет показывается в поиске' : 'Кабинет убран из поиска');
         return docListing();

@@ -1,13 +1,13 @@
 import { Hono } from 'hono';
 import { subjectFor, verifyInitData } from './auth.js';
 import { closeVisit } from './close.js';
-import { createServiceClient, resolveIdentity, scopeFor, TenantScope, type Env, type Identity } from './db.js';
+import { createServiceClient, isPlatformOwner, resolveIdentity, scopeFor, TenantScope, type Env, type Identity } from './db.js';
 import { doctor } from './routes/doctor.js';
 import { patient } from './routes/patient.js';
 import { warehouse } from './routes/warehouse.js';
 import { onboarding } from './routes/onboarding.js';
 import { creditTelegramPayment, sendInvoice, subscriptionState, type Plan } from './billing.js';
-import { confirmedText, notifyReminder, notifyStaffCancelled, notifyStaffRescheduled } from './notify.js';
+import { confirmedText, notifyLicenseVerdict, notifyReminder, notifyStaffCancelled, notifyStaffRescheduled } from './notify.js';
 
 type Vars = { scope: TenantScope; identity: Identity; sb: ReturnType<typeof createServiceClient> };
 
@@ -27,6 +27,7 @@ app.use('/api/*', async (c, next) => {
       sb, subject, verified.startParam,
       (verified.user as { first_name?: string } | null)?.first_name,
     );
+    identity.isPlatformOwner = isPlatformOwner(c.env, subject);
     c.set('sb', sb);
     c.set('identity', identity);
     // Кабинета может не быть вовсе: человек здесь впервые и без ссылки.
@@ -65,6 +66,7 @@ app.get('/api/me', (c) => {
     phone: id.phone,
     onboarding: id.onboarding,
     catalogReviewed: id.catalogReviewed,
+    isPlatformOwner: id.isPlatformOwner,
     bot: c.env.TELEGRAM_BOT_USERNAME ?? 'stomiko_bot',
   });
 });
@@ -236,6 +238,64 @@ app.get('/api/me/record', async (c) => {
   });
   if (error) return c.json({ error: error.message }, 500);
   return c.json({ entries: data ?? [] });
+});
+
+/**
+ * Очередь проверки лицензий.
+ *
+ * Живёт вне кабинета намеренно: проверяющий смотрит ЧУЖИЕ кабинеты, и
+ * пускать сюда по членству значило бы дать кабинету право проверить самого
+ * себя. Право приходит списком из настроек воркера.
+ */
+app.get('/api/admin/licenses', async (c) => {
+  if (!c.get('identity').isPlatformOwner) return c.json({ error: 'не ваше' }, 403);
+  const { data, error } = await c.get('sb').rpc('pending_licenses', {});
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json({
+    pending: ((data ?? []) as Record<string, unknown>[]).map((r) => ({
+      tenantId: r.tenant_id,
+      name: r.name,
+      doctor: r.doctor,
+      city: r.city,
+      address: r.address,
+      phone: r.phone,
+      licenseNumber: r.license_number,
+      licenseTin: r.license_tin,
+      submittedAt: r.submitted_at,
+    })),
+  });
+});
+
+/** Вердикт по одной заявке. */
+app.post('/api/admin/licenses/:tenantId', async (c) => {
+  const id = c.get('identity');
+  if (!id.isPlatformOwner) return c.json({ error: 'не ваше' }, 403);
+  const b = await c.req.json<{ verdict?: string; validUntil?: string; note?: string }>()
+    .catch(() => ({} as Record<string, never>));
+  try {
+    const { data, error } = await c.get('sb').rpc('review_cabinet_license', {
+      p_tenant_id: c.req.param('tenantId'),
+      p_verdict: b.verdict ?? '',
+      p_actor: id.subject,
+      p_valid_until: b.validUntil || null,
+      p_note: b.note ?? null,
+    });
+    if (error) throw new Error(error.message);
+    // Врач узнаёт о вердикте сразу: он ждёт ответа, чтобы открыть поиск.
+    const t = data as { name?: string; licenseStatus?: string } | null;
+    const staff = await c.get('sb').from('memberships').select('subject')
+      .eq('tenant_id', c.req.param('tenantId'));
+    const url = c.env.MINIAPP_URL ?? 'https://stomiko-api.alrevion.workers.dev';
+    for (const m of staff.data ?? []) {
+      await notifyLicenseVerdict(
+        c.env.TELEGRAM_BOT_TOKEN, String(m.subject),
+        t?.licenseStatus === 'verified', b.note ?? '', url,
+      ).catch(() => {});
+    }
+    return c.json(data);
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
 });
 
 /**

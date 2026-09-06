@@ -258,6 +258,32 @@ export async function notifyStaffRescheduled(
   return broadcast(botToken, subjects, text);
 }
 
+/**
+ * Вердикт по лицензии.
+ *
+ * Врач ждёт ответа, чтобы открыть поиск, и узнать о нём должен в чате, а не
+ * заглядывая в приложение по десять раз. Отказ несёт причину: без неё врач
+ * прочитает его как произвол и уйдёт, не поняв, что исправлять.
+ */
+export async function notifyLicenseVerdict(
+  botToken: string, subject: string, ok: boolean, note: string, appUrl: string,
+): Promise<number> {
+  const text = ok
+    ? [
+        '<b>Лицензия проверена</b>', '',
+        'Кабинет можно показывать в поиске: включите «Показ в поиске».',
+        note ? '' : '', note ? escapeHtml(note) : '',
+      ].filter(Boolean).join('\n')
+    : [
+        '<b>Лицензию подтвердить не удалось</b>', '',
+        escapeHtml(note || 'Проверьте номер и пришлите его заново.'), '',
+        'Кабинет работает как обычно — по вашей ссылке. Не показывается только в поиске.',
+      ].join('\n');
+  return broadcast(botToken, [subject], text, {
+    inline_keyboard: [[{ text: ok ? 'Открыть поиск' : 'Исправить номер', web_app: { url: appUrl } }]],
+  });
+}
+
 async function broadcast(
   botToken: string, subjects: string[], text: string, keyboard?: unknown,
 ): Promise<number> {

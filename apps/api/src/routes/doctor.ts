@@ -621,6 +621,30 @@ doctor.get('/listing', async (c) => {
   return c.json({ ...t, listed: Boolean(t?.listed) });
 });
 
+/**
+ * Номер лицензии на медицинскую деятельность.
+ *
+ * Спрашивается не при регистрации, а на входе в поиск. Кабинет без
+ * публикации — личный инструмент врача и никого, кроме его собственных
+ * пациентов, не касается. А карточка в общем списке — это уже совет
+ * платформы незнакомому человеку, и он должен быть проверен.
+ */
+doctor.put('/license', async (c) => {
+  const scope = c.get('scope');
+  const b = await c.req.json<{ number?: string; tin?: string }>()
+    .catch(() => ({} as Record<string, never>));
+  try {
+    const res = await scope.rpc<Record<string, unknown>>('set_cabinet_license', {
+      p_tenant_id: scope.tenantId,
+      p_number: b.number ?? '',
+      p_tin: b.tin ?? null,
+    });
+    return c.json(res);
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+});
+
 doctor.put('/listing', async (c) => {
   const scope = c.get('scope');
   const b = await c.req.json<{
