@@ -80,6 +80,17 @@ const inflated=await docA(`/doctor/patients/${pid}/teeth`);
 ok((inflated.body.marks??[]).filter((m:any)=>m.tooth==='26').length===2,
    'на 26 осталось ровно две отметки', String((inflated.body.marks??[]).filter((m:any)=>m.tooth==='26').length));
 
+console.log('\n── Молочные ──');
+// Детская карта — те же отметки, другие номера: четверти 5–8, всего 20 зубов.
+const milk=await docA(`/doctor/patients/${pid}/teeth`,{method:'POST',body:JSON.stringify({tooth:'55',code:'caries'})});
+ok(milk.status===200,'кариес на молочном 55',String(milk.body.error??''));
+const milkBad=await docA(`/doctor/patients/${pid}/teeth`,{method:'POST',body:JSON.stringify({tooth:'59',code:'caries'})});
+ok(milkBad.status===400,'несуществующий молочный 59 отклонён',`${milkBad.status}`);
+const both=await docA(`/doctor/patients/${pid}/teeth`);
+const m55=(both.body.marks??[]).find((m:any)=>m.tooth==='55');
+ok(m55?.code==='caries','молочный и постоянные живут в одной карте',
+   (both.body.marks??[]).map((m:any)=>m.tooth).sort().join(','));
+
 console.log('\n── Снятие ──');
 const off=await docA(`/doctor/patients/${pid}/teeth`,{method:'POST',body:JSON.stringify({tooth:'36',category:'build'})});
 ok(off.status===200,'отметка снята',String(off.body.error??''));

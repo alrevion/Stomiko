@@ -2923,15 +2923,22 @@ function toothChart({ marks = {}, states = {}, selected = [], milk = false, dots
  */
 
 function chartCard({ marks = {}, states = {}, selected = [], milk = false, note = '', wide = false, legend = true }) {
-  const hasMilk = [...Object.keys(marks), ...Object.keys(states)].some(isMilkTooth);
+  // Сколько отмечено на ТОЙ челюсти, которая сейчас не показана. Без этого
+  // врач отмечает молочный зуб, переключается обратно и видит пустую карту:
+  // отметка на месте, но её не видно, а понять это неоткуда.
+  const other = [...Object.keys(marks), ...Object.keys(states)]
+    .filter((t) => isMilkTooth(t) !== milk).length;
+  // Переключатель показывается ВСЕГДА. Раньше он появлялся только когда на
+  // молочных уже что-то отмечено — а отметить их было нечем, потому что
+  // переключателя не было. Детского пациента завести было невозможно.
   return `<div class="card">
     <div class="chart-wrap${wide ? ' wide' : ''}">${
       toothChart({ marks, states, selected, milk, dots: wide })}</div>
     <div class="chart-legend">
       <span class="done"><i></i>лечили</span>
       <span class="sel"><i></i>выбран</span>
-      ${hasMilk || milk ? `<button class="mini" data-act="milk" data-on="${milk ? '' : '1'}">${
-        milk ? 'Постоянные зубы' : 'Молочные зубы'}</button>` : ''}
+      <button class="mini" data-act="milk" data-on="${milk ? '' : '1'}">${
+        milk ? 'Постоянные зубы' : 'Молочные зубы'}${other ? ` · ${other}` : ''}</button>
     </div>
     ${note ? `<div class="note">${note}</div>` : ''}
   </div>`;
