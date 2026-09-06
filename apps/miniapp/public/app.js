@@ -1499,6 +1499,7 @@ async function docTeeth(patientId) {
     history: data.history ?? [],
     palette: data.palette ?? [],
     pick: S.d.teeth?.patientId === patientId ? S.d.teeth.pick : null,
+    last: null,
     open: S.d.teeth?.patientId === patientId ? S.d.teeth.open : 'lesion',
     milk: S.d.teeth?.patientId === patientId ? S.d.teeth.milk : false,
     tooth: null,
@@ -1520,7 +1521,10 @@ function drawDocTeeth() {
     <main>
       ${chartCard({
         states, selected: d.tooth ? [d.tooth] : [], milk: d.milk, wide: true,
-        note: picked
+        note: d.last
+          ? `<b>${esc(d.last.name)}</b> → зуб <b>${esc(d.last.tooth)}</b>.${
+              picked ? ' Нажимайте дальше — отметка та же.' : ''}`
+          : picked
           ? `Выбрано: <b>${esc(picked.name)}</b>. Нажимайте зубы — отметка встанет на каждый.`
           : 'Выберите отметку внизу и нажмите зуб. Нажатие без отметки покажет, что на зубе уже есть.',
       })}
@@ -3193,6 +3197,10 @@ document.addEventListener('click', async (e) => {
         // бывает и то и другое. Но чаще всё-таки вылечили — поэтому такой
         // зуб раскрываем сразу, чтобы снять старую отметку было одно
         // касание, а не поиск. Решает врач, не программа.
+        // Зуб на карте — 17 пикселей шириной. Врач видит, что что-то
+        // покрасилось, но не читает номер. Называем словом, что и куда
+        // встало: иначе промах в соседний зуб замечается через неделю.
+        t.last = { tooth: d.tooth, name: mark?.name ?? '' };
         const mineNow = t.marks.filter((m) => m.tooth === d.tooth);
         if (mineNow.some((m) => m.category === 'build')
             && mineNow.some((m) => m.category === 'lesion')) {
@@ -3215,6 +3223,7 @@ document.addEventListener('click', async (e) => {
     if (d.markcode) {
       S.d.teeth.pick = S.d.teeth.pick === d.markcode ? null : d.markcode;
       S.d.teeth.tooth = null;
+      S.d.teeth.last = null;
       return drawDocTeeth();
     }
     if (d.markgroup) {
@@ -3829,9 +3838,19 @@ document.addEventListener('click', async (e) => {
       case 'billing': return go(docBilling);
       case 'payplan': {
         el.disabled = true;
-        const r = await api('/billing/invoice', { method: 'POST', body: JSON.stringify({ plan: S.d.plan }) });
-        toast('Счёт отправлен в чат с ботом');
-        tg?.openTelegramLink?.(`https://t.me/${r.bot ?? 'stomiko_bot'}`);
+        const was = el.textContent;
+        el.textContent = 'Выставляем…';
+        try {
+          const r = await api('/billing/invoice', { method: 'POST', body: JSON.stringify({ plan: S.d.plan }) });
+          toast('Счёт отправлен в чат с ботом');
+          tg?.openTelegramLink?.(`https://t.me/${r.bot ?? 'stomiko_bot'}`);
+        } finally {
+          // Кнопку возвращаем в строй. Она оставалась серой навсегда: счёт
+          // мог не дойти, врач мог передумать и выбрать другой срок — а
+          // единственный способ починить экран был перезапуск приложения.
+          el.disabled = false;
+          el.textContent = was;
+        }
         return;
       }
       case 'reviewhint': return go(afterTour, { visits: 0, appointments: 0, patients: 0, batches: 0 });
@@ -3995,3 +4014,4 @@ document.addEventListener('click', async (e) => {
     render(`<div class="empty">${esc(err.message)}</div>`);
   }
 })();
+
