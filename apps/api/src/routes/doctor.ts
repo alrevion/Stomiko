@@ -625,7 +625,9 @@ doctor.put('/listing', async (c) => {
   const scope = c.get('scope');
   const b = await c.req.json<{
     city?: string; address?: string; landmark?: string; phone?: string; listed?: boolean;
+    lat?: number; lon?: number;
   }>().catch(() => ({} as Record<string, never>));
+  const hasPoint = typeof b.lat === 'number' && typeof b.lon === 'number';
   try {
     const res = await scope.rpc<Record<string, unknown>>('set_cabinet_listing', {
       p_tenant_id: scope.tenantId,
@@ -634,6 +636,8 @@ doctor.put('/listing', async (c) => {
       p_landmark: b.landmark ?? null,
       p_phone: b.phone ?? null,
       p_listed: b.listed === true,
+      p_lat: hasPoint ? b.lat : null,
+      p_lon: hasPoint ? b.lon : null,
     });
     return c.json(res);
   } catch (err) {

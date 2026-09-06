@@ -58,14 +58,56 @@ ok(mine?.landmark === 'напротив Чорсу', 'ориентир пока�
 ok(typeof mine?.consultPrice === 'number' && mine.consultPrice > 0, 'цена приёма показана', String(mine?.consultPrice));
 ok(!!mine?.nextSlot, 'ближайшее свободное время посчитано', String(mine?.nextSlot));
 const fields = Object.keys(mine ?? {}).sort().join(',');
-ok(fields === 'address,city,consultPrice,doctor,landmark,name,nextSlot,phone,tenantId',
+ok(fields === 'address,city,consultPrice,distanceKm,doctor,landmark,name,nextSlot,phone,tenantId',
   'в выдаче нет полей сверх согласованных', fields);
+ok(mine?.distanceKm === null, 'без места человека расстояние не выдумывается', String(mine?.distanceKm));
 
 console.log('\n── Фильтры ──');
 ok((await pat('/find?city=Ташкент')).body.cabinets.some((x: any) => x.tenantId === t1), 'фильтр по городу');
 ok(!(await pat('/find?city=Самарканд')).body.cabinets.some((x: any) => x.tenantId === t1), 'чужой город пуст');
 ok((await pat('/find?q=Чорсу')).body.cabinets.some((x: any) => x.tenantId === t1), 'поиск по ориентиру');
 ok((await pat('/find')).body.cities.some((c: any) => c.city === 'Ташкент'), 'город попал в фильтр');
+
+console.log('\n── Профиль: ФИО и место ──');
+const noName = await pat('/me/profile', { method:'PUT', body: JSON.stringify({ fullName:'К' }) });
+ok(noName.status === 400, 'имя из одной буквы не принимается', String(noName.body.error ?? ''));
+const half = await pat('/me/profile', { method:'PUT', body: JSON.stringify({ lat: 41.31 }) });
+ok(half.status === 200 && half.body.lat === null,
+  'широта без долготы не сохраняется как место', JSON.stringify(half.body));
+const named = await pat('/me/profile', { method:'PUT', body: JSON.stringify({ fullName:'Каримов Азиз' }) });
+ok(named.status === 200 && named.body.fullName === 'Каримов Азиз', 'ФИО сохранено');
+const placed = await pat('/me/profile', { method:'PUT', body: JSON.stringify({ lat: 41.31, lon: 69.24 }) });
+ok(placed.body.fullName === 'Каримов Азиз', 'отправка места не стирает ФИО', String(placed.body.fullName));
+ok(placed.body.lat === 41.31 && placed.body.lon === 69.24, 'место сохранено');
+const meNamed = await pat('/me');
+ok(meNamed.body.fullName === 'Каримов Азиз' && meNamed.body.lat === 41.31,
+  'ФИО и место приходят при входе — второй раз не спросят');
+
+console.log('\n── Ближайшие сверху ──');
+// Свой кабинет — рядом; чужой публикуем далеко, в Самарканде.
+await open('/doctor/listing', { method:'PUT', body: JSON.stringify({
+  city:'Ташкент', address:'ул. Амира Темура, 12', landmark:'напротив Чорсу',
+  phone:'+998901112233', listed:true, lat: 41.32, lon: 69.25 }) });
+await shut('/doctor/listing', { method:'PUT', body: JSON.stringify({
+  city:'Самарканд', address:'ул. Регистан, 1', phone:'+998907776655',
+  listed:true, lat: 39.65, lon: 66.96 }) });
+const near = (await pat('/find')).body.cabinets ?? [];
+const iNear = near.findIndex((x: any) => x.tenantId === t1);
+const iFar = near.findIndex((x: any) => x.tenantId === t2);
+ok(iNear >= 0 && iFar >= 0 && iNear < iFar, 'ближний кабинет выше дальнего', `${iNear} < ${iFar}`);
+ok(near[iNear]?.distanceKm != null && near[iNear].distanceKm < 3,
+  'до ближнего — километры, а не сотни', String(near[iNear]?.distanceKm));
+ok(near[iFar]?.distanceKm > 200 && near[iFar]?.distanceKm < 350,
+  'до Самарканда честные сотни километров', String(near[iFar]?.distanceKm));
+// Кабинет без точки участвует в поиске, просто без расстояния.
+await sb.from('tenants').update({ lat: null, lon: null }).eq('id', t2);
+const mixed = (await pat('/find')).body.cabinets ?? [];
+ok(mixed.some((x: any) => x.tenantId === t2 && x.distanceKm === null),
+  'кабинет без точки не выпадает из поиска');
+ok(mixed.findIndex((x: any) => x.tenantId === t1) < mixed.findIndex((x: any) => x.tenantId === t2),
+  'кабинет с расстоянием идёт раньше кабинета без него');
+await shut('/doctor/listing', { method:'PUT', body: JSON.stringify({
+  city:'Самарканд', address:'ул. Регистан, 1', phone:'+998907776655', listed:false }) });
 
 console.log('\n── Выбор и запись ──');
 const stolen = await pat('/me/choose', { method:'POST', body: JSON.stringify({ tenantId: t2 }) });

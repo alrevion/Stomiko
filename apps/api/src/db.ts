@@ -204,8 +204,13 @@ export interface Cabinet {
 
 export interface Identity {
   subject: string;
-  /** Имя из Telegram: им подписан раздел «Ещё» у пациента. */
+  /** Имя из Telegram: ник, а не ФИО. */
   firstName: string | null;
+  /** ФИО, которое человек назвал сам. Им подписывается запись. */
+  fullName: string | null;
+  /** Где человек находится: по этому ищутся ближайшие кабинеты. */
+  lat: number | null;
+  lon: number | null;
   mode: 'patient' | 'doctor';
   /** null означает «идти некуда» — новый человек без ссылки и без истории. */
   tenantId: string | null;
@@ -227,6 +232,9 @@ export interface Identity {
 interface UserContext {
   subject: string;
   firstName: string | null;
+  fullName: string | null;
+  lat: number | null;
+  lon: number | null;
   phone: string | null;
   phoneVerified: boolean;
   activeMode: 'patient' | 'doctor';
@@ -258,6 +266,9 @@ export async function resolveIdentity(
   const base = {
     subject,
     firstName: ctx.firstName ?? null,
+    fullName: ctx.fullName ?? null,
+    lat: ctx.lat ?? null,
+    lon: ctx.lon ?? null,
     canBeDoctor: ctx.staffOf.length > 0,
     staffOf: ctx.staffOf,
     patientOf: ctx.patientOf,

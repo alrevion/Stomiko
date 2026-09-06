@@ -52,6 +52,9 @@ app.get('/api/me', (c) => {
     // Имя нужно разделу «Ещё»: он про самого человека, и обращаться там
     // безлично — как здороваться с собственным кабинетом.
     firstName: id.firstName,
+    fullName: id.fullName,
+    lat: id.lat,
+    lon: id.lon,
     canBeDoctor: id.canBeDoctor,
     needsChoice: id.needsChoice,
     ownLink: id.ownLink,
@@ -161,6 +164,10 @@ app.get('/api/find', async (c) => {
     sb.rpc('public_cabinets', {
       p_city: c.req.query('city') ?? null,
       p_query: c.req.query('q') ?? null,
+      // Точка берётся из профиля, а не из запроса: своё место человек
+      // отправляет осознанно, а параметр в адресе подставит кто угодно.
+      p_lat: c.get('identity').lat,
+      p_lon: c.get('identity').lon,
     }),
     sb.rpc('public_cities', {}),
   ]);
@@ -176,6 +183,7 @@ app.get('/api/find', async (c) => {
       phone: r.phone,
       consultPrice: r.consult_price == null ? null : Number(r.consult_price),
       nextSlot: r.next_slot,
+      distanceKm: r.distance_km == null ? null : Number(r.distance_km),
     })),
     cities: ((cities.data ?? []) as Record<string, unknown>[])
       .map((r) => ({ city: r.city, cabinets: Number(r.cabinets) })),
@@ -228,6 +236,31 @@ app.get('/api/me/record', async (c) => {
   });
   if (error) return c.json({ error: error.message }, 500);
   return c.json({ entries: data ?? [] });
+});
+
+/**
+ * Профиль человека: ФИО и место.
+ *
+ * Имя из Telegram — ник; ФИО человек называет сам, один раз, и оно
+ * подставляется в каждую запись вместо ручного ввода в каждом кабинете.
+ * Место нужно только поиску ближайших и пустым полем не стирается.
+ */
+app.put('/api/me/profile', async (c) => {
+  const b = await c.req.json<{ fullName?: string; lat?: number; lon?: number }>()
+    .catch(() => ({} as Record<string, never>));
+  const hasPoint = typeof b.lat === 'number' && typeof b.lon === 'number';
+  try {
+    const { data, error } = await c.get('sb').rpc('set_person_profile', {
+      p_subject: c.get('identity').subject,
+      p_full_name: b.fullName ?? null,
+      p_lat: hasPoint ? b.lat : null,
+      p_lon: hasPoint ? b.lon : null,
+    });
+    if (error) throw new Error(error.message);
+    return c.json(data);
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
 });
 
 /**

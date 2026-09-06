@@ -209,6 +209,12 @@ function go(fn, ...args) {
   return fn(...args);
 }
 
+/** Перерисовать текущий экран на месте, не заводя лишний шаг в истории. */
+function refresh() {
+  const [fn, args] = S.stack[S.stack.length - 1] ?? [];
+  return fn ? fn(...args) : undefined;
+}
+
 function back(levels = 1) {
   if (S.stack.length <= 1) return;
   // Лишние уровни снимаем сами, последний шаг делает история: так на каждый
@@ -291,26 +297,91 @@ const humanMins = (m) => (m < 60 ? `${m} мин`
    Человек не «пациент» или «врач» — он и то и другое, а режим выбирает сам.
    Стоматолог тоже лечит зубы у коллеги: раньше членство навсегда делало его
    врачом, и записаться он не мог.
+
+   По умолчанию все — пациенты. Спрашивать роль на входе значило задавать
+   вопрос, ответ на который у девяноста девяти человек из ста одинаков, и
+   ставить его ПЕРЕД тем, зачем человек пришёл. Кабинет заводится из «Ещё»:
+   врач делает это однажды, пациент записывается каждый раз.
    ══════════════════════════════════════════════════════════════════════════ */
 
-function welcome() {
-  render(`
-    <header><h1>Stomiko</h1><span class="sub">кабинет и запись в одном месте</span></header>
-    <main>
-      <div class="picker">
-        <button data-act="iampatient"><div class="name">Я пациент</div>
-          <div class="price">записаться к врачу</div></button>
-        <button data-act="iamdoctor"><div class="name">Я врач</div>
-          <div class="price">вести свой кабинет</div></button>
-      </div>
-    </main>
-  `);
+
+/**
+ * Место человека.
+ *
+ * В новых клиентах точку отдаёт сам Telegram, в старых — браузер. Отказ не
+ * ошибка: поиск работает и без места, просто без слова «ближайшие».
+ */
+function askLocation() {
+  const lm = tg?.LocationManager;
+  return new Promise((resolve) => {
+    const ok = (lat, lon) => resolve(lat == null ? null : { lat, lon });
+    if (lm?.getLocation) {
+      const get = () => lm.getLocation((l) => ok(l?.latitude ?? null, l?.longitude));
+      return lm.isInited ? get() : lm.init(get);
+    }
+    if (!navigator.geolocation) return resolve(null);
+    navigator.geolocation.getCurrentPosition(
+      (p) => ok(p.coords.latitude, p.coords.longitude), () => resolve(null),
+      { timeout: 10000, maximumAge: 300000 });
+  });
 }
 
 /**
- * Пациент без ссылки. Каталога врачей у нас нет — и придумывать его вместо
- * честного ответа неправильно: человек пойдёт по несуществующему пути.
+ * Кто вы и где вы.
+ *
+ * Три вещи, которые платформа спрашивает один раз за всё время: имя, номер и
+ * место. Имя — потому что в Telegram у человека ник («Yakov», «ᅠ»), а врачу
+ * в карточке нужно, кого звать в кресло; раньше ФИО вводилось заново при
+ * каждой записи в каждый кабинет. Номер — куда звонить, если приём сдвинулся.
+ * Место — чтобы «найти стоматолога» отвечало «ближайшие», а не «какие-нибудь».
+ *
+ * Экран один и тот же на первом входе и в профиле: где человек однажды
+ * заполнил, там же он потом и ищет.
  */
+function profileScreen(first = false) {
+  const me = S.d.me ?? {};
+  const placed = me.lat != null;
+  render(`
+    <header><h1>${first ? 'Давайте познакомимся' : 'Ваши данные'}</h1>
+      <span class="sub">${first
+        ? 'три поля, и больше их никто не спросит'
+        : 'меняются в любой момент'}</span></header>
+    <main>
+      <div class="card">
+        <label class="fieldlabel">Фамилия и имя</label>
+        <input class="field" id="myname" autocomplete="name" enterkeyhint="done"
+          placeholder="Каримов Азиз"
+          value="${esc(me.fullName ?? me.firstName ?? '')}">
+        <div class="note">Так вас запишут в карту. Имя из Telegram для этого не
+        годится — там ник, а не ФИО.</div>
+      </div>
+
+      <div class="card">
+        <div class="row"><span class="muted">Телефон</span>
+          <span class="name mono">${me.phone ? esc(me.phone) : 'не подтверждён'}</span></div>
+        <div class="note">${me.phone
+          ? 'Его видит только тот кабинет, в который вы записываетесь. Номер приходит от Telegram — подделать его нельзя.'
+          : 'Понадобится при записи: врач должен знать, куда звонить, если приём придётся перенести. Telegram пришлёт номер сам.'}</div>
+        <button class="ghost" data-act="sharephone">${
+          me.phone ? 'Отправить другой номер' : 'Поделиться номером'}</button>
+      </div>
+
+      <div class="card">
+        <div class="row"><span class="muted">Где вы находитесь</span>
+          <span class="name">${placed ? 'определено' : 'не отправлено'}</span></div>
+        <div class="note">${placed
+          ? 'По этой точке в поиске считается, кто к вам ближе. Переехали или ищете рядом с работой — отправьте другую.'
+          : 'Нужно ровно для одного: показать в поиске ближайшие к вам кабинеты. Адрес не сохраняется и никому не показывается.'}</div>
+        <button class="ghost" data-act="myplace">${
+          placed ? 'Отправить другое место' : 'Отправить своё место'}</button>
+      </div>
+    </main>
+    <button class="primary" data-act="saveprofile" data-first="${first ? 1 : 0}">${
+      first ? 'Продолжить' : 'Сохранить'}</button>
+  `);
+  if (first) setTimeout(() => document.getElementById('myname')?.focus(), 80);
+}
+
 /**
  * Поиск стоматолога.
  *
@@ -334,7 +405,8 @@ async function needLink(city = '', query = '') {
   render(`
     <header><h1>Найти стоматолога</h1>
       <span class="sub">${cabinets.length
-        ? `${cabinets.length} ${cabinets.length === 1 ? 'кабинет' : 'кабинета'} принимают запись`
+        ? `${cabinets.length} ${cabinets.length === 1 ? 'кабинет' : 'кабинета'}${
+            S.d.me?.lat != null ? ', ближайшие сверху' : ' принимают запись'}`
         : 'по вашему запросу пусто'}</span></header>
     <main>
       <div class="card">
@@ -353,7 +425,9 @@ async function needLink(city = '', query = '') {
           <div class="name">${esc(c.name)}</div>
           <div class="muted">${c.doctor ? `${esc(c.doctor)} · ` : ''}${esc(c.city ?? '')}${
             c.landmark ? `, ${esc(c.landmark)}` : c.address ? `, ${esc(c.address)}` : ''}</div>
-          <div class="muted">Ближайшее время: ${when(c.nextSlot)}</div>
+          <div class="muted">${c.distanceKm != null
+            ? `${c.distanceKm < 1 ? 'меньше километра' : `${c.distanceKm} км от вас`} · ` : ''
+            }Ближайшее время: ${when(c.nextSlot)}</div>
         </div>
         <div class="qty-val mono">${c.consultPrice != null ? money(c.consultPrice) : '—'}<small>приём</small></div>
       </div>`).join('')
@@ -362,6 +436,12 @@ async function needLink(city = '', query = '') {
             ? 'По этому запросу ничего не нашлось. Попробуйте другой город или название.'
             : 'Пока ни один кабинет не открыл запись через поиск. Если вам дали ссылку врача — откройте её, и всё настроится само.'}</div>
         </div>`}
+
+      ${S.d.me?.lat == null && cabinets.length ? `<div class="card">
+        <div class="note">Отправьте своё место — и кабинеты встанут по
+        расстоянию, ближайшие сверху.</div>
+        <button class="ghost" data-act="myplace">Показать ближайшие</button>
+      </div>` : ''}
 
       <div class="card">
         <div class="note" style="margin:0">Если стоматолог прислал вам ссылку —
@@ -436,6 +516,17 @@ async function docListing() {
           <input class="field" id="lphone" value="${esc(l.phone ?? '')}" placeholder="+998 __ ___ __ __" inputmode="tel">
           <div class="note">Без города, адреса и телефона показать кабинет нельзя:
           такая карточка не отвечает ни на один вопрос пациента.</div>
+        </div>
+
+        <div class="card">
+          <div class="row"><span class="muted">Точка на карте</span>
+            <span class="name">${l.lat != null ? 'отмечена' : 'не отмечена'}</span></div>
+          <div class="note">Пациент ищет «кто ко мне ближе». Нажмите это,
+          стоя в кабинете, — и он увидит расстояние до вас. ${l.lat != null
+            ? 'Переехали — отметьте заново.'
+            : 'Без точки кабинет всё равно найдётся по городу и адресу, просто не попадёт в ближайшие.'}</div>
+          <button class="ghost" data-act="cabplace">${
+            l.lat != null ? 'Отметить заново' : 'Кабинет здесь'}</button>
         </div>
 
         <div class="sectiontitle">Так вас увидят</div>
@@ -2527,7 +2618,7 @@ function patConfirm(startsAt) {
       <div class="card">
         <label class="fieldlabel">Ваше имя</label>
         <input class="field" id="pname" placeholder="Как к вам обращаться" autocomplete="name"
-               value="${esc(tg?.initDataUnsafe?.user?.first_name ?? '')}">
+               value="${esc(S.d.me?.fullName ?? tg?.initDataUnsafe?.user?.first_name ?? '')}">
         <div class="row"><span class="muted">Телефон</span>
           <span class="name mono">${esc(S.d.me?.phone ?? '')}</span></div>
         <label class="fieldlabel">Что беспокоит — необязательно</label>
@@ -2685,7 +2776,9 @@ async function awaitPhone(startsAt, attempts = 20) {
     if (me?.phone) {
       S.d.me = me;
       toast('Номер подтверждён');
-      return patConfirm(startsAt);
+      // Номер спрашивают в двух местах: на пути к записи и в профиле. В
+      // первом случае продолжаем запись, во втором — просто показываем номер.
+      return startsAt ? patConfirm(startsAt) : refresh();
     }
   }
   toast('Номер пока не пришёл. Нажмите «Поделиться номером» в чате с ботом', true);
@@ -3123,7 +3216,7 @@ async function patMore() {
   const cabinets = me.patientOf ?? [];
   render(`
     <header><h1>Ещё</h1>
-      <span class="sub">${esc(me.firstName ?? 'вы')}${
+      <span class="sub">${esc(me.fullName ?? me.firstName ?? 'вы')}${
         me.phone ? ` · ${esc(me.phone)}` : ''}</span></header>
     <main>
       ${me.canBeDoctor ? `<div class="picker">
@@ -3151,13 +3244,12 @@ async function patMore() {
           <div class="price">по городу, названию или ориентиру</div></button>
       </div>
 
-      <div class="sectiontitle">Номер телефона</div>
-      <div class="card">
-        <div class="row"><span class="muted">Ваш номер</span>
-          <span class="mono">${me.phone ? esc(me.phone) : 'не подтверждён'}</span></div>
-        <div class="note">${me.phone
-          ? 'Его видит только тот кабинет, в который вы записываетесь. Номер приходит от Telegram — подделать его нельзя.'
-          : 'Понадобится при записи: врач должен знать, куда звонить, если приём придётся перенести. Telegram пришлёт номер сам.'}</div>
+      <div class="sectiontitle">Ваши данные</div>
+      <div class="picker">
+        <button data-act="profile"><div class="name">ФИО, номер и место</div>
+          <div class="price">${[me.fullName || 'имя не указано',
+            me.phone || 'номер не подтверждён',
+            me.lat != null ? 'место есть' : 'место не отправлено'].join(' · ')}</div></button>
       </div>
     </main>
   `);
@@ -3532,6 +3624,29 @@ document.addEventListener('click', async (e) => {
         else tg?.openTelegramLink?.(`https://t.me/${S.d.me?.bot ?? 'stomiko_bot'}?start=phone`);
         return awaitPhone(d.at);
       }
+      case 'myplace': {
+        el.disabled = true;
+        el.textContent = 'Определяем…';
+        const point = await askLocation();
+        el.disabled = false;
+        if (!point) return toast('Место не получено. Разрешите доступ в настройках Telegram', true);
+        S.d.me = { ...S.d.me, ...await api('/me/profile',
+          { method: 'PUT', body: JSON.stringify(point) }) };
+        toast('Место сохранено');
+        return refresh();
+      }
+      case 'profile': return go(profileScreen, false);
+      case 'saveprofile': {
+        const name = val('myname');
+        if (name.length < 2) return toast('Как вас записывать в карту?', true);
+        el.disabled = true;
+        S.d.me = { ...S.d.me, ...await api('/me/profile',
+          { method: 'PUT', body: JSON.stringify({ fullName: name }) }) };
+        if (d.first !== '1') { toast('Сохранено'); return back(); }
+        setTabs(S.d.me.mode);
+        S.stack = [];
+        return go(TABS[0].fn);
+      }
       case 'dangerzone': {
         const scale = await api('/doctor/cabinet/scale');
         const owner = scale.role === 'owner';
@@ -3564,18 +3679,29 @@ document.addEventListener('click', async (e) => {
         toast(owner ? 'Кабинет удалён' : 'Вы вышли из кабинета');
         dropCache(); S.d.cal = null; S.stack = []; S.tab = 0;
         S.d.me = await api('/me');
-        if (S.d.me.needsChoice) { TABS = []; syncChrome(); return welcome(); }
         setTabs(S.d.me.mode);
         return go(TABS[0].fn);
       }
       case 'listing': return go(docListing);
+      case 'cabplace': {
+        el.disabled = true;
+        el.textContent = 'Определяем…';
+        const point = await askLocation();
+        if (!point) { el.disabled = false; return toast('Место не получено. Разрешите доступ в настройках Telegram', true); }
+        // Точка сохраняется вместе с остальной карточкой: врач мог не дописать
+        // адрес, и отправлять её отдельно — значит публиковать полкарточки.
+        readListingForm();
+        S.d.listing = { ...S.d.listing, ...point };
+        toast('Отмечено');
+        return S.d.redraw();
+      }
       case 'savelisting': {
         readListingForm();
         const l = S.d.listing;
         el.disabled = true;
         const r = await api('/doctor/listing', { method: 'PUT', body: JSON.stringify({
           city: l.city, address: l.address, landmark: l.landmark, phone: l.phone,
-          listed: d.listed === '1' }) });
+          listed: d.listed === '1', lat: l.lat, lon: l.lon }) });
         S.d.listing = { ...l, ...r, listed: Boolean(r.listed) };
         toast(r.listed ? 'Кабинет показывается в поиске' : 'Кабинет убран из поиска');
         return docListing();
@@ -3917,8 +4043,6 @@ document.addEventListener('click', async (e) => {
         return docSchedule();
       }
       case 'patients': return goTab(TABS.findIndex((t) => t.k === 'patients'));
-      case 'iampatient':
-        return S.d.me.patientOf.length ? (setTabs('patient'), go(TABS[0].fn)) : needLink();
       case 'myrecord': return go(patRecord);
       case 'findcab': return needLink();
       case 'iamdoctor': return doctorEntry();
@@ -4035,6 +4159,12 @@ document.addEventListener('click', async (e) => {
           method: 'POST',
           body: JSON.stringify({ serviceId: S.d.service.id, startsAt: d.at, name, note: val('pnote') }),
         });
+        // Поправил имя при записи — значит, в профиле оно было неверное.
+        // Спрашивать то же самое в третий раз незачем.
+        if (name !== S.d.me?.fullName) {
+          S.d.me = { ...S.d.me, ...await api('/me/profile',
+            { method: 'PUT', body: JSON.stringify({ fullName: name }) }).catch(() => ({})) };
+        }
         tg?.HapticFeedback?.notificationOccurred?.('success');
         S.stack = [];
         // Бот не может написать первым тому, кто не начинал с ним чат. Пациент
@@ -4068,14 +4198,23 @@ document.addEventListener('click', async (e) => {
   try {
     const me = await api('/me');
     S.d.me = me;
-    // Человек здесь впервые и без ссылки — спрашиваем, кто он, вместо того
-    // чтобы наугад привести его в чей-то кабинет.
-    if (me.needsChoice) { TABS = []; syncChrome(); return welcome(); }
+    // Роль больше не спрашивается на входе. Пациентов на порядок больше, чем
+    // врачей, и первым экраном им доставался вопрос о том, кто они, — вместо
+    // поиска стоматолога, за которым они и пришли. Врач заводит кабинет из
+    // раздела «Ещё»: он делает это один раз в жизни, пациент записывается
+    // каждый раз.
+    const q = new URLSearchParams(location.search);
+    // Первый вход: имени у человека ещё нет. Без него его не записать и не
+    // позвать в кресло, поэтому спрашиваем сразу — один раз за всё время, а
+    // не при каждой записи в каждый кабинет. Кроме случая, когда человек
+    // пришёл по ссылке за конкретным делом: знакомиться посреди дела глупо.
+    if (!me.fullName && !q.get('appt') && !q.get('resched')) {
+      return go(profileScreen, true);
+    }
     setTabs(me.mode);
     await go(TABS[0].fn);
     // Пришли по кнопке «Перенести» под напоминанием: человек уже решил, что
     // переносит, и список записей на пути к сетке времени — лишний экран.
-    const q = new URLSearchParams(location.search);
     if (q.get('plan') === '1') {
       const my = TABS.findIndex((t) => t.k === 'my');
       if (my >= 0) return goTab(my);

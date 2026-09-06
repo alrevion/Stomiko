@@ -1002,3 +1002,20 @@ td { padding: var(--s2) 0; border-top: 1px solid var(--hair); vertical-align: to
 }
 .markbtn.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 [data-markgroup] { cursor: pointer; }
+
+/* Второстепенное действие внутри карточки: «отправить номер», «отправить
+   место». Главная кнопка на экране одна и живёт внизу; эти — рядом с тем
+   полем, которое они меняют, иначе непонятно, что именно нажимаешь. */
+.ghost {
+  display: block;
+  width: 100%;
+  min-height: var(--tap);
+  margin-top: var(--s3);
+  border: 1px solid var(--sep);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 650;
+}
+.ghost:active { background: var(--fill); }

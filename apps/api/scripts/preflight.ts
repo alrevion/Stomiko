@@ -234,7 +234,7 @@ async function main() {
   // «единственный кабинет» отдавал бы его чужому врачу, как только кабинетов
   // станет два.
   ok(sm.body.mode === 'patient' && sm.body.needsChoice === true,
-    'новый человек без ссылки: спрашиваем, кто он', `needsChoice=${sm.body.needsChoice}`);
+    'новый человек без ссылки опознан как пациент', `needsChoice=${sm.body.needsChoice}`);
   ok((await stranger('/book/info')).status === 400, 'без кабинета запись недоступна');
   const sneak = await stranger('/doctor/calendar');
   ok(sneak.status === 403, 'посторонний не пролезает в кабинет', `HTTP ${sneak.status}`);
