@@ -1418,6 +1418,7 @@ async function docRecord(patientId) {
  */
 function drawDocRecord() {
   const { entries, noTelegram } = S.d.record;
+  scrollToTooth(S.d.recTooth);
   const roots = entries.filter((e) => !e.amends);
   const tooth = S.d.recTooth;
   const shown = tooth
@@ -1513,6 +1514,7 @@ function drawDocTeeth() {
   const picked = d.palette.find((x) => x.code === d.pick);
   const focus = d.tooth ? (states[d.tooth] ?? []) : [];
 
+  scrollToTooth(d.last?.tooth ?? d.tooth);
   render(`
     <header><h1>Зубы: ${esc(S.d.patient?.name ?? '')}</h1>
       <span class="sub">${d.marks.length
@@ -2776,7 +2778,7 @@ function ensureSprite() {
   spriteIn = true;
 }
 
-const W = 40;      // ширина места под зуб
+const W = 40;      // ШИРИНА места под зуб в пикселях, не количество зубов
 const CROWN = 72;  // высота коронки с корнем
 // Жевательная поверхность шире, чем выше (48×41 в исходнике). Ставим её в
 // клетку по этой пропорции: в квадратной коробке она висела бы посередине,
@@ -2878,7 +2880,10 @@ function toothChart({ marks = {}, states = {}, selected = [], milk = false, dots
   const botRow = PAD + CROWN + OCCL + 18;
   const height = botRow + CROWN + OCCL + PAD + 10;
 
-  return `<svg class="chart" viewBox="0 0 ${width} ${height}" role="group" aria-label="Зубная карта">
+  // Один к одному с viewBox: зуб выходит ровно в 40 экранных пикселей,
+  // сколько бы ни было места. Не влезло — прокрутится.
+  return `<svg class="chart" viewBox="0 0 ${width} ${height}" style="min-width:${width}px"
+      role="group" aria-label="Зубная карта">
     <line class="midline" x1="${width / 2}" y1="2" x2="${width / 2}" y2="${height - 2}"/>
     <g>${jawRow(up, { up: true, marks, states, selected, milk, top: topRow, dots })}</g>
     <g>${jawRow(low, { up: false, marks, states, selected, milk, top: botRow, dots })}</g>
@@ -2895,6 +2900,26 @@ function toothChart({ marks = {}, states = {}, selected = [], milk = false, dots
  * прокручивается вбок: 35px на зуб. Тридцать два зуба в ширину телефона с
  * запасом на промах не помещаются, и делать вид, что помещаются, хуже.
  */
+/**
+ * Подкрутить карту к зубу.
+ *
+ * Карта шире экрана, и зуб, о котором сейчас речь, может оказаться за
+ * краем: отметил 38 — увидел пустое место. Вызывается после отрисовки,
+ * поэтому ищет уже готовый элемент.
+ */
+function scrollToTooth(tooth) {
+  if (!tooth) return;
+  setTimeout(() => {
+    const g = document.querySelector(`.chart [data-tooth="${tooth}"]`);
+    const box = g?.closest('.chart-wrap');
+    if (!g || !box) return;
+    const r = g.getBoundingClientRect();
+    const b = box.getBoundingClientRect();
+    if (r.left >= b.left && r.right <= b.right) return;
+    box.scrollBy({ left: r.left - b.left - b.width / 2 + r.width / 2, behavior: 'smooth' });
+  }, 30);
+}
+
 function chartCard({ marks = {}, states = {}, selected = [], milk = false, note = '', wide = false, legend = true }) {
   const hasMilk = [...Object.keys(marks), ...Object.keys(states)].some(isMilkTooth);
   return `<div class="card">
@@ -2931,6 +2956,7 @@ function toothPick(cfg) {
 function drawToothPick() {
   const p = S.d.pick;
   const n = p.value.length;
+  scrollToTooth(p.value[p.value.length - 1]);
   return render(`
     <header><h1>${esc(p.title ?? 'Какой зуб')}</h1>
       ${p.sub ? `<span class="sub">${esc(p.sub)}</span>` : ''}</header>
@@ -3021,6 +3047,7 @@ async function patRecord() {
 /** Отрисовка своей карты из уже полученного: выбор зуба не ходит в сеть. */
 function drawPatRecord() {
   const entries = S.d.myRecord ?? [];
+  scrollToTooth(S.d.recTooth);
   const roots = entries.filter((e) => !e.amends);
   const cabinets = new Set(entries.map((e) => e.cabinet));
   const tooth = S.d.recTooth;
@@ -3993,6 +4020,13 @@ document.addEventListener('click', async (e) => {
     if (q.get('plan') === '1') {
       const my = TABS.findIndex((t) => t.k === 'my');
       if (my >= 0) return goTab(my);
+    }
+    // Пришли по кнопке «Открыть» под уведомлением о новой записи: врач уже
+    // прочитал, кто и когда, — ему нужна сама запись, а не путь к ней.
+    const appt = q.get('appt');
+    if (/^[0-9a-f-]{36}$/i.test(appt ?? '') && me.mode === 'doctor') {
+      go(docAppointment, appt);
+      return;
     }
     const resched = q.get('resched');
     if (/^[0-9a-f-]{36}$/i.test(resched ?? '')) {

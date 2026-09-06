@@ -156,7 +156,7 @@ patient.post('/', async (c) => {
       serviceName: String(svc?.name_ru ?? ''),
       startsAt: res.startsAt,
       note: b.note ?? null,
-    });
+    }, c.env.MINIAPP_URL ?? 'https://stomiko-api.alrevion.workers.dev', res.appointmentId);
 
     return c.json({ ...res, notificationsEnabled: delivery === 'sent' });
   } catch (err) {

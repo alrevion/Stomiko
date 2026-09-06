@@ -151,6 +151,7 @@ export interface StaffNotice {
  */
 export async function notifyStaffBooked(
   botToken: string, subjects: string[], n: StaffNotice,
+  appUrl?: string, appointmentId?: string,
 ): Promise<number> {
   const text = [
     '<b>Новая запись</b>',
@@ -160,7 +161,13 @@ export async function notifyStaffBooked(
     formatWhen(n.startsAt),
     n.note ? `\nПовод: ${escapeHtml(n.note)}` : '',
   ].filter(Boolean).join('\n');
-  return broadcast(botToken, subjects, text);
+  // Кнопка ведёт прямо к записи. Без неё врач узнавал о пациенте и дальше
+  // искал его сам: открыть приложение, найти день, найти время — четыре
+  // касания на то, что уже названо в сообщении.
+  const keyboard = appUrl && appointmentId
+    ? { inline_keyboard: [[{ text: 'Открыть', web_app: { url: `${appUrl}?appt=${appointmentId}` } }]] }
+    : undefined;
+  return broadcast(botToken, subjects, text, keyboard);
 }
 
 /** Пациент отменил сам — врач должен узнать, чтобы занять окно. */
@@ -251,12 +258,14 @@ export async function notifyStaffRescheduled(
   return broadcast(botToken, subjects, text);
 }
 
-async function broadcast(botToken: string, subjects: string[], text: string): Promise<number> {
+async function broadcast(
+  botToken: string, subjects: string[], text: string, keyboard?: unknown,
+): Promise<number> {
   let delivered = 0;
   for (const subject of subjects) {
     const chatId = chatIdFromSubject(subject);
     if (!chatId) continue;
-    if (await send(botToken, chatId, text) === 'sent') delivered += 1;
+    if (await send(botToken, chatId, text, keyboard) === 'sent') delivered += 1;
   }
   return delivered;
 }
