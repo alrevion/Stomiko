@@ -49,6 +49,9 @@ app.get('/api/me', (c) => {
   const id = c.get('identity');
   return c.json({
     mode: id.mode,
+    // Имя нужно разделу «Ещё»: он про самого человека, и обращаться там
+    // безлично — как здороваться с собственным кабинетом.
+    firstName: id.firstName,
     canBeDoctor: id.canBeDoctor,
     needsChoice: id.needsChoice,
     ownLink: id.ownLink,

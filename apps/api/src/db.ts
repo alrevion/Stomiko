@@ -204,6 +204,8 @@ export interface Cabinet {
 
 export interface Identity {
   subject: string;
+  /** Имя из Telegram: им подписан раздел «Ещё» у пациента. */
+  firstName: string | null;
   mode: 'patient' | 'doctor';
   /** null означает «идти некуда» — новый человек без ссылки и без истории. */
   tenantId: string | null;
@@ -255,6 +257,7 @@ export async function resolveIdentity(
 
   const base = {
     subject,
+    firstName: ctx.firstName ?? null,
     canBeDoctor: ctx.staffOf.length > 0,
     staffOf: ctx.staffOf,
     patientOf: ctx.patientOf,

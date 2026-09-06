@@ -83,6 +83,20 @@ await sb.from('subscriptions').update({ paid_until: new Date(Date.now() - 864e5)
 ok(!(await pat('/find')).body.cabinets.some((x: any) => x.tenantId === t1),
   'замороженный кабинет исчез из выдачи — иначе пациента ведут в закрытую дверь');
 
+console.log('\n── Свой кабинет открыт, даже если не в поиске ──');
+// Большинство частных кабинетов в поиске не показываются — работают по
+// ссылке. Вернуться к своему стоматологу человек должен всё равно.
+// Пациент уже лечится в первом кабинете — заводим ему там карточку.
+const ins = await sb.from('patients').insert({ tenant_id: t1,
+  full_name: 'Свой Пациент', telegram_subject: `tg:${PAT}` });
+ok(!ins.error, 'карточка пациента в кабинете заведена', ins.error?.message ?? '');
+await sb.from('tenants').update({ listed: false }).eq('id', t1);
+const backOwn = await pat('/me/choose', { method: 'POST', body: JSON.stringify({ tenantId: t1 }) });
+ok(backOwn.status === 200, 'к СВОЕМУ кабинету можно вернуться без публикации',
+   String(backOwn.body.error ?? backOwn.body.cabinet));
+const alienShut = await pat('/me/choose', { method: 'POST', body: JSON.stringify({ tenantId: t2 }) });
+ok(alienShut.status === 400, 'в ЧУЖОЙ закрытый кабинет по-прежнему нельзя', `${alienShut.status}`);
+
 console.log('\n── Уборка ──');
 for (const id of [t1, t2]) { const d = await sb.rpc('delete_tenant', { p_tenant_id: id }); ok(!d.error, 'кабинет удалён', d.error?.message ?? ''); }
 await sb.from('app_users').delete().in('subject', [`tg:${OPEN}`, `tg:${SHUT}`, `tg:${PAT}`]);

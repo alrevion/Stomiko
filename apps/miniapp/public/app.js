@@ -139,6 +139,7 @@ const ICON = {
   cabinet: '<path d="M4 20V9.5L12 4l8 5.5V20"/><path d="M9.5 20v-5.5h5V20"/>',
   book: '<path d="M12 4v16M4 12h16"/><circle cx="12" cy="12" r="9"/>',
   my: '<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/><path d="m8.5 15 2.2 2.2L15.5 13"/>',
+  more: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
   card: '<path d="M12 3.2c-1.2 0-1.9.6-3 .6-2 0-3.5 1.5-3.5 4 0 3 1 4.6 1.6 7 .4 1.6.7 3 1.9 3 1.4 0 1.3-2.4 3-2.4s1.6 2.4 3 2.4c1.2 0 1.5-1.4 1.9-3 .6-2.4 1.6-4 1.6-7 0-2.5-1.5-4-3.5-4-1.1 0-1.8-.6-3-.6z"/>',
 };
 const svg = (d) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"
@@ -151,11 +152,15 @@ function setTabs(role) {
        { k: 'patients', label: 'Пациенты', fn: docPatients },
        { k: 'stock', label: 'Склад', fn: docStock },
        { k: 'cabinet', label: 'Кабинет', fn: docMenu }]
-    : [{ k: 'book', label: 'Запись', fn: patServices },
+    : [{ k: 'book', label: 'Запись', fn: patBook },
        { k: 'my', label: 'Мои записи', fn: patMy },
        // Карта — не подраздел записей: она принадлежит человеку, а не
        // кабинету, и переживает уход от врача. Раздел первого уровня.
-       { k: 'card', label: 'Моя карта', fn: patRecord }];
+       { k: 'card', label: 'Моя карта', fn: patRecord },
+       // «Ещё» — единственное место, где человек переключается в кабинет,
+       // меняет активного стоматолога и видит свой номер. Раньше всё это
+       // жило на экране поиска, куда пациент с кабинетом не заходил вовсе.
+       { k: 'more', label: 'Ещё', fn: patMore }];
   navEl.style.setProperty('--n', TABS.length);
   navEl.innerHTML = '<div class="nav-ind"></div>' + TABS.map((t, i) =>
     `<button data-tab="${i}" aria-label="${t.label}">${svg(ICON[t.k])}<span>${t.label}</span></button>`).join('');
@@ -317,10 +322,6 @@ function welcome() {
  * врача, а отвечать ей нечем.
  */
 async function needLink(city = '', query = '') {
-  // Экран поиска — корень для человека без кабинета. Без записи в стеке
-  // системная кнопка «назад» закрывала бы приложение с любого экрана,
-  // открытого отсюда, — например с его собственной карты.
-  if (!S.stack.length) S.stack.push([needLink, []]);
   spinner('Ищем кабинеты…');
   const { cabinets, cities } = await api(
     `/find?city=${encodeURIComponent(city)}&q=${encodeURIComponent(query)}`);
@@ -362,16 +363,6 @@ async function needLink(city = '', query = '') {
             : 'Пока ни один кабинет не открыл запись через поиск. Если вам дали ссылку врача — откройте её, и всё настроится само.'}</div>
         </div>`}
 
-      <div class="sectiontitle">Другое</div>
-      <div class="picker">
-        <button data-act="myrecord"><div class="name">Моя карта</div>
-          <div class="price">что вам лечили — остаётся у вас</div></button>
-        ${S.d.me?.canBeDoctor
-          ? `<button data-act="switcher"><div class="name">Вернуться в кабинет</div>
-              <div class="price">вы работаете в Stomiko как врач</div></button>`
-          : `<button data-act="iamdoctor"><div class="name">Я врач</div>
-              <div class="price">создать свой кабинет или войти по приглашению</div></button>`}
-      </div>
       <div class="card">
         <div class="note" style="margin:0">Если стоматолог прислал вам ссылку —
         просто откройте её. Она приведёт прямо к нему, искать не нужно.</div>
@@ -2423,6 +2414,17 @@ const toHHMM = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m
    ПАЦИЕНТ
    ══════════════════════════════════════════════════════════════════════════ */
 
+/**
+ * Первая вкладка пациента.
+ *
+ * Кабинет выбран — прайс этого кабинета, потому что записаться к своему
+ * стоматологу это одно касание. Не выбран — поиск: человек пришёл по
+ * рекламе, ссылки у него нет, и упираться в «кабинет не выбран» ему незачем.
+ */
+function patBook() {
+  return S.d.me?.tenantId ? patServices() : needLink();
+}
+
 async function patServices() {
   spinner('Загрузка…');
   const [info, my] = await Promise.all([api('/book/info'), api('/book/my').catch(() => ({ appointments: [] }))]);
@@ -3105,6 +3107,59 @@ function drawPatRecord() {
     ${TABS.some((t) => t.k === 'book')
       ? '<button class="primary" data-act="tobook">Записаться</button>'
       : '<button class="primary" data-act="findcab">Найти стоматолога</button>'}
+  `);
+}
+
+/**
+ * «Ещё» — всё про самого человека, а не про лечение.
+ *
+ * До этого раздела не было вовсе: переключение в кабинет, выбор другого
+ * стоматолога и подтверждение номера жили на экране поиска, куда пациент с
+ * кабинетом не заходил никогда. Врач, который лечится у коллеги, не мог
+ * вернуться к себе иначе как случайно.
+ */
+async function patMore() {
+  const me = S.d.me ?? {};
+  const cabinets = me.patientOf ?? [];
+  render(`
+    <header><h1>Ещё</h1>
+      <span class="sub">${esc(me.firstName ?? 'вы')}${
+        me.phone ? ` · ${esc(me.phone)}` : ''}</span></header>
+    <main>
+      ${me.canBeDoctor ? `<div class="picker">
+        <button data-act="switcher"><div class="name">Вернуться в кабинет</div>
+          <div class="price">вы работаете в ${me.staffOf.length === 1 ? 'кабинете'
+            : `${me.staffOf.length} кабинетах`}</div></button>
+      </div>` : `<div class="picker">
+        <button data-act="iamdoctor"><div class="name">Я врач</div>
+          <div class="price">создать свой кабинет или войти по приглашению</div></button>
+      </div>`}
+
+      <div class="sectiontitle">Где вы лечитесь</div>
+      ${cabinets.length ? `<div class="picker">
+        ${cabinets.map((c) => `<button data-pick-cab="${c.tenantId}">
+          <div class="name">${esc(c.name)}${c.tenantId === me.tenantId ? ' · сейчас' : ''}</div>
+          <div class="price">${c.upcoming
+            ? `${c.upcoming} ${plural(c.upcoming, 'запись', 'записи', 'записей')} впереди`
+            : c.lastVisit ? `последний приём ${dateLabel(c.lastVisit)}` : 'записей нет'}</div>
+        </button>`).join('')}
+      </div>` : `<div class="card"><div class="note" style="margin:0">Вы пока никуда не
+        записывались. Найдите стоматолога в первом разделе или откройте ссылку,
+        которую он вам прислал.</div></div>`}
+      <div class="picker">
+        <button data-act="findcab"><div class="name">Найти другого стоматолога</div>
+          <div class="price">по городу, названию или ориентиру</div></button>
+      </div>
+
+      <div class="sectiontitle">Номер телефона</div>
+      <div class="card">
+        <div class="row"><span class="muted">Ваш номер</span>
+          <span class="mono">${me.phone ? esc(me.phone) : 'не подтверждён'}</span></div>
+        <div class="note">${me.phone
+          ? 'Его видит только тот кабинет, в который вы записываетесь. Номер приходит от Telegram — подделать его нельзя.'
+          : 'Понадобится при записи: врач должен знать, куда звонить, если приём придётся перенести. Telegram пришлёт номер сам.'}</div>
+      </div>
+    </main>
   `);
 }
 
@@ -4016,9 +4071,6 @@ document.addEventListener('click', async (e) => {
     // Человек здесь впервые и без ссылки — спрашиваем, кто он, вместо того
     // чтобы наугад привести его в чей-то кабинет.
     if (me.needsChoice) { TABS = []; syncChrome(); return welcome(); }
-    // Режим пациента выбран, но лечиться пока негде — честный экран вместо
-    // ошибки «кабинет не выбран» из пустого списка услуг.
-    if (me.mode === 'patient' && !me.tenantId) { TABS = []; syncChrome(); return needLink(); }
     setTabs(me.mode);
     await go(TABS[0].fn);
     // Пришли по кнопке «Перенести» под напоминанием: человек уже решил, что
