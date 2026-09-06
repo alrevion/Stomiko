@@ -935,32 +935,14 @@ td { padding: var(--s2) 0; border-top: 1px solid var(--hair); vertical-align: to
 .chart { display: block; width: 100%; height: auto; touch-action: manipulation; }
 /* Прокрутка живёт ВНУТРИ карточки: горизонтальная прокрутка страницы —
    это дефект, а вбок уехавшая карта в своей коробке — приём. */
-/* Карта КРУПНАЯ и прокручивается вбок.
-   Сначала была прокрутка, потом я убрал её ради «видно весь рот» — и зуб
-   стал шириной в палец ребёнка. Владелец посмотрел на телефоне и решил:
-   пусть лучше крутится. Он прав — карту читают по одному зубу, а не
-   охватывают взглядом целиком, и мелкий зуб нельзя ни разглядеть, ни
-   попасть по нему.
-
-   Ширина зуба задаётся в единицах viewBox (40 на зуб) и держится один к
-   одному: 16 зубов дают 640px, молочные 10 — 400px и влезают без
-   прокрутки. Ширину ставит разметка, чтобы обе челюсти и молочный ряд
-   считались из одного места. */
-.chart-wrap {
-  overflow-x: auto;
-  overflow-y: hidden;
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior-x: contain;
-  /* Затемнение у краёв: без него не видно, что карта продолжается, и я сам
-     на это попался — принял половину челюсти за всю. */
-  -webkit-mask-image: linear-gradient(to right, transparent, #000 14px,
-    #000 calc(100% - 14px), transparent);
-  mask-image: linear-gradient(to right, transparent, #000 14px,
-    #000 calc(100% - 14px), transparent);
-}
-.chart-wrap::-webkit-scrollbar { height: 3px; }
-.chart-wrap::-webkit-scrollbar-thumb {
-  background: var(--sep); border-radius: var(--r-pill);
+/* Зубная формула: две половины рта, обе целиком.
+   Прокрутки нет и не должно быть — формулу читают целиком, а не по кускам.
+   Ряд из восьми зубов помещается в телефон при различимом зубе; ряд из
+   шестнадцати не помещается ни при каком. */
+.half + .half { margin-top: var(--s4); }
+.half-label {
+  font-size: 12px; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--label-4); margin-bottom: 2px;
 }
 .chart .tooth { cursor: pointer; }
 .chart .cell {

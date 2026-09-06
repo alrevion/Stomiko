@@ -1418,7 +1418,6 @@ async function docRecord(patientId) {
  */
 function drawDocRecord() {
   const { entries, noTelegram } = S.d.record;
-  scrollToTooth(S.d.recTooth);
   const roots = entries.filter((e) => !e.amends);
   const tooth = S.d.recTooth;
   const shown = tooth
@@ -1514,7 +1513,6 @@ function drawDocTeeth() {
   const picked = d.palette.find((x) => x.code === d.pick);
   const focus = d.tooth ? (states[d.tooth] ?? []) : [];
 
-  scrollToTooth(d.last?.tooth ?? d.tooth);
   render(`
     <header><h1>Зубы: ${esc(S.d.patient?.name ?? '')}</h1>
       <span class="sub">${d.marks.length
@@ -2813,11 +2811,9 @@ const MARK_WEIGHT = { state: 0, build: 1, lesion: 2, endo: 3, perio: 4 };
 const leadMark = (list) => (list ?? []).slice()
   .sort((a, b) => (MARK_WEIGHT[a.category] ?? 9) - (MARK_WEIGHT[b.category] ?? 9))[0];
 
-function jawRow(numbers, { up, marks, states, selected, milk, top, dots }) {
-  const half = numbers.length / 2;
+function jawRow(numbers, { up, marks, states, selected, milk, top, dots, mirror }) {
   return numbers.map((t, i) => {
     const x = i * W;
-    const mirror = i >= half ? -1 : 1;
     const pre = milk ? 't-milk-' : 't-';
     const kind = toothKind(t);
     const crownY = up ? top : top + OCCL + 4;
@@ -2871,23 +2867,48 @@ function jawRow(numbers, { up, marks, states, selected, milk, top, dots }) {
  * Отметка — подложка под зубом, а не перекраска самого зуба: рисунок залит
  * градиентами, и перекрасить его значит потерять и корень, и пульпу.
  */
-function toothChart({ marks = {}, states = {}, selected = [], milk = false, dots = false }) {
-  ensureSprite();
-  const up = milk ? FDI.upperMilk : FDI.upper;
-  const low = milk ? FDI.lowerMilk : FDI.lower;
+/**
+ * Половина рта: верхние и нижние зубы одной стороны, в прикусе.
+ *
+ * Восемь зубов в ряду умещаются на экран телефона целиком, шестнадцать —
+ * нет. Делим по СТОРОНАМ, а не по челюстям: врач работает с одной стороной
+ * и видит, что чему противостоит — верхняя шестёрка над нижней шестёркой.
+ */
+function halfChart(up, low, { marks, states, selected, milk, dots, mirror, label }) {
   const width = up.length * W;
   const topRow = PAD;
   const botRow = PAD + CROWN + OCCL + 18;
   const height = botRow + CROWN + OCCL + PAD + 10;
+  return `<div class="half">
+    <div class="half-label">${label}</div>
+    <svg class="chart" viewBox="0 0 ${width} ${height}"
+        role="group" aria-label="Зубы: ${label}">
+      <g>${jawRow(up, { up: true, marks, states, selected, milk, top: topRow, dots, mirror })}</g>
+      <g>${jawRow(low, { up: false, marks, states, selected, milk, top: botRow, dots, mirror })}</g>
+    </svg>
+  </div>`;
+}
 
-  // Один к одному с viewBox: зуб выходит ровно в 40 экранных пикселей,
-  // сколько бы ни было места. Не влезло — прокрутится.
-  return `<svg class="chart" viewBox="0 0 ${width} ${height}" style="min-width:${width}px"
-      role="group" aria-label="Зубная карта">
-    <line class="midline" x1="${width / 2}" y1="2" x2="${width / 2}" y2="${height - 2}"/>
-    <g>${jawRow(up, { up: true, marks, states, selected, milk, top: topRow, dots })}</g>
-    <g>${jawRow(low, { up: false, marks, states, selected, milk, top: botRow, dots })}</g>
-  </svg>`;
+/**
+ * Зубная формула: все 32 зуба сразу.
+ *
+ * Ряд из шестнадцати зубов не влезает в телефон, если зуб должен быть
+ * различим. Сначала я ужал зубы — стало не разглядеть; потом добавил
+ * прокрутку — и формула перестала быть формулой: врач видел девять зубов
+ * из тридцати двух и справедливо спрашивал, где остальные. Ответ не в
+ * размере и не в прокрутке, а в делении: две половины рта, обе целиком на
+ * экране, каждый зуб со своим номером.
+ */
+function toothChart({ marks = {}, states = {}, selected = [], milk = false, dots = false }) {
+  ensureSprite();
+  const up = milk ? FDI.upperMilk : FDI.upper;
+  const low = milk ? FDI.lowerMilk : FDI.lower;
+  const h = up.length / 2;
+  const common = { marks, states, selected, milk, dots };
+  return halfChart(up.slice(0, h), low.slice(0, h),
+      { ...common, mirror: 1, label: 'Правая сторона' })
+    + halfChart(up.slice(h), low.slice(h),
+      { ...common, mirror: -1, label: 'Левая сторона' });
 }
 
 /** Карточка с картой: легенда и переключатель молочных. */
@@ -2900,25 +2921,6 @@ function toothChart({ marks = {}, states = {}, selected = [], milk = false, dots
  * прокручивается вбок: 35px на зуб. Тридцать два зуба в ширину телефона с
  * запасом на промах не помещаются, и делать вид, что помещаются, хуже.
  */
-/**
- * Подкрутить карту к зубу.
- *
- * Карта шире экрана, и зуб, о котором сейчас речь, может оказаться за
- * краем: отметил 38 — увидел пустое место. Вызывается после отрисовки,
- * поэтому ищет уже готовый элемент.
- */
-function scrollToTooth(tooth) {
-  if (!tooth) return;
-  setTimeout(() => {
-    const g = document.querySelector(`.chart [data-tooth="${tooth}"]`);
-    const box = g?.closest('.chart-wrap');
-    if (!g || !box) return;
-    const r = g.getBoundingClientRect();
-    const b = box.getBoundingClientRect();
-    if (r.left >= b.left && r.right <= b.right) return;
-    box.scrollBy({ left: r.left - b.left - b.width / 2 + r.width / 2, behavior: 'smooth' });
-  }, 30);
-}
 
 function chartCard({ marks = {}, states = {}, selected = [], milk = false, note = '', wide = false, legend = true }) {
   const hasMilk = [...Object.keys(marks), ...Object.keys(states)].some(isMilkTooth);
@@ -2956,7 +2958,6 @@ function toothPick(cfg) {
 function drawToothPick() {
   const p = S.d.pick;
   const n = p.value.length;
-  scrollToTooth(p.value[p.value.length - 1]);
   return render(`
     <header><h1>${esc(p.title ?? 'Какой зуб')}</h1>
       ${p.sub ? `<span class="sub">${esc(p.sub)}</span>` : ''}</header>
@@ -3047,7 +3048,6 @@ async function patRecord() {
 /** Отрисовка своей карты из уже полученного: выбор зуба не ходит в сеть. */
 function drawPatRecord() {
   const entries = S.d.myRecord ?? [];
-  scrollToTooth(S.d.recTooth);
   const roots = entries.filter((e) => !e.amends);
   const cabinets = new Set(entries.map((e) => e.cabinet));
   const tooth = S.d.recTooth;
