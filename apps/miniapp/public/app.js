@@ -2045,8 +2045,13 @@ async function docMenu() {
           <div class="price">одноразовая ссылка на сутки</div></button>
         <button data-act="billing"><div class="name">Подписка</div>
           <div class="price">срок и продление</div></button>
-        <button data-act="switcher"><div class="name">Режим</div>
-          <div class="price">записаться к врачу как пациент</div></button>
+      </div>
+
+      <div class="sectiontitle">Кто вы сейчас</div>
+      <div class="picker">
+        <button data-act="switcher"><div class="name">Вы в кабинете как врач</div>
+          <div class="price">перейти к себе-пациенту: свои записи, зубная карта,
+          поиск стоматолога</div></button>
       </div>
 
       <div class="danger-zone">
@@ -3778,6 +3783,16 @@ document.addEventListener('click', async (e) => {
           { method: 'PUT', body: JSON.stringify({ fullName: name }) }) };
         S.d.draftName = null;
         if (d.first !== '1') { toast('Сохранено'); return back(); }
+        // Знакомство кончается пациентом — даже у того, у кого есть кабинет.
+        // Спрашивали про ЧЕЛОВЕКА: имя, номер, место. Высадить его после
+        // этого сразу в кресло врача — ответить не на тот вопрос. Кабинет
+        // никуда не делся: он в «Ещё» → «Вернуться в кабинет», и следующий
+        // вход снова откроется там, где человек закончил.
+        if (S.d.me.mode !== 'patient') {
+          await api('/me/mode', { method: 'POST', body: JSON.stringify({ mode: 'patient' }) });
+          S.d.me = await api('/me');
+          dropCache();
+        }
         setTabs(S.d.me.mode);
         S.stack = [];
         return go(TABS[0].fn);
