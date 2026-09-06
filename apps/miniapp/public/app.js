@@ -209,6 +209,18 @@ function go(fn, ...args) {
   return fn(...args);
 }
 
+/**
+ * Запомнить набранное перед перерисовкой.
+ *
+ * Человек пишет ФИО и по дороге жмёт «Поделиться номером». Экран после
+ * этого рисуется заново — и без этого стирал бы то, что он только что
+ * набрал, на середине знакомства.
+ */
+function keepTyped() {
+  const n = val('myname');
+  if (n) S.d.me = { ...S.d.me, fullName: n };
+}
+
 /** Перерисовать текущий экран на месте, не заводя лишний шаг в истории. */
 function refresh() {
   const [fn, args] = S.stack[S.stack.length - 1] ?? [];
@@ -314,15 +326,36 @@ const humanMins = (m) => (m < 60 ? `${m} мин`
 function askLocation() {
   const lm = tg?.LocationManager;
   return new Promise((resolve) => {
-    const ok = (lat, lon) => resolve(lat == null ? null : { lat, lon });
     if (lm?.getLocation) {
-      const get = () => lm.getLocation((l) => ok(l?.latitude ?? null, l?.longitude));
+      const get = () => lm.getLocation((l) => resolve(
+        l?.latitude != null ? { lat: l.latitude, lon: l.longitude }
+          // Отказ и «в этом клиенте нельзя» — разные беды: первую человек
+          // чинит в настройках, вторую не чинит никак, и предлагать ему
+          // настройки во втором случае значит гонять его впустую.
+          : lm.isLocationAvailable === false ? 'нет' : 'запрещено'));
       return lm.isInited ? get() : lm.init(get);
     }
-    if (!navigator.geolocation) return resolve(null);
+    if (!navigator.geolocation) return resolve('нет');
     navigator.geolocation.getCurrentPosition(
-      (p) => ok(p.coords.latitude, p.coords.longitude), () => resolve(null),
+      (p) => resolve({ lat: p.coords.latitude, lon: p.coords.longitude }),
+      (e) => resolve(e.code === 1 ? 'запрещено' : 'нет'),
       { timeout: 10000, maximumAge: 300000 });
+  });
+}
+
+/**
+ * Номер от Telegram.
+ *
+ * Новые клиенты спрашивают прямо из приложения и честно отвечают, нажал ли
+ * человек «Поделиться» или «Отмена». Старые такого не умеют — там остаётся
+ * кнопка в чате с ботом. Оба пути кончаются одним и тем же служебным
+ * сообщением боту, поэтому дальше поведение общее.
+ */
+function askContact() {
+  return new Promise((resolve) => {
+    if (typeof tg?.requestContact !== 'function') return resolve('нельзя');
+    try { tg.requestContact((ok) => resolve(ok ? 'отправлен' : 'отказ')); }
+    catch { resolve('нельзя'); }
   });
 }
 
@@ -350,10 +383,9 @@ function profileScreen(first = false) {
       <div class="card">
         <label class="fieldlabel">Фамилия и имя</label>
         <input class="field" id="myname" autocomplete="name" enterkeyhint="done"
-          placeholder="Каримов Азиз"
-          value="${esc(me.fullName ?? me.firstName ?? '')}">
-        <div class="note">Так вас запишут в карту. Имя из Telegram для этого не
-        годится — там ник, а не ФИО.</div>
+          placeholder="Каримов Азиз" value="${esc(me.fullName ?? '')}">
+        <div class="note">Так вас запишут в карту. Имя из Telegram сюда не
+        подставляем: там ник, а не ФИО.</div>
       </div>
 
       <div class="card">
@@ -361,7 +393,7 @@ function profileScreen(first = false) {
           <span class="name mono">${me.phone ? esc(me.phone) : 'не подтверждён'}</span></div>
         <div class="note">${me.phone
           ? 'Его видит только тот кабинет, в который вы записываетесь. Номер приходит от Telegram — подделать его нельзя.'
-          : 'Понадобится при записи: врач должен знать, куда звонить, если приём придётся перенести. Telegram пришлёт номер сам.'}</div>
+          : 'Без номера в системе не зарегистрироваться: врач должен знать, куда звонить, если приём придётся перенести. Telegram пришлёт его сам, вводить ничего не нужно.'}</div>
         <button class="ghost" data-act="sharephone">${
           me.phone ? 'Отправить другой номер' : 'Поделиться номером'}</button>
       </div>
@@ -369,15 +401,23 @@ function profileScreen(first = false) {
       <div class="card">
         <div class="row"><span class="muted">Где вы находитесь</span>
           <span class="name">${placed ? 'определено' : 'не отправлено'}</span></div>
-        <div class="note">${placed
-          ? 'По этой точке в поиске считается, кто к вам ближе. Переехали или ищете рядом с работой — отправьте другую.'
-          : 'Нужно ровно для одного: показать в поиске ближайшие к вам кабинеты. Адрес не сохраняется и никому не показывается.'}</div>
-        <button class="ghost" data-act="myplace">${
-          placed ? 'Отправить другое место' : 'Отправить своё место'}</button>
+        <div class="note">${
+          S.d.geo === 'запрещено'
+            ? 'Telegram не дал нам ваше место. Разрешите геопозицию в его настройках — или продолжайте без неё, всё остальное работает.'
+            : S.d.geo === 'нет'
+              ? 'Этот Telegram не умеет отдавать место. Не беда: кабинеты ищутся по городу и адресу, просто без слова «ближайшие».'
+              : placed
+                ? 'По этой точке в поиске считается, кто к вам ближе. Переехали или ищете рядом с работой — отправьте другую.'
+                : 'Нужно ровно для одного: показать в поиске ближайшие к вам кабинеты. Без него тоже можно — просто кабинеты будут в общем порядке.'}</div>
+        ${S.d.geo === 'нет' ? '' : `<button class="ghost" data-act="${
+          S.d.geo === 'запрещено' ? 'geosettings' : 'myplace'}">${
+          S.d.geo === 'запрещено' ? 'Открыть настройки Telegram'
+            : placed ? 'Отправить другое место' : 'Отправить своё место'}</button>`}
       </div>
     </main>
-    <button class="primary" data-act="saveprofile" data-first="${first ? 1 : 0}">${
-      first ? 'Продолжить' : 'Сохранить'}</button>
+    <button class="primary" data-act="saveprofile" data-first="${first ? 1 : 0}"
+      ${first && !me.phone ? 'disabled' : ''}>${
+      !first ? 'Сохранить' : me.phone ? 'Продолжить' : 'Сначала номер телефона'}</button>
   `);
   if (first) setTimeout(() => document.getElementById('myname')?.focus(), 80);
 }
@@ -2618,7 +2658,7 @@ function patConfirm(startsAt) {
       <div class="card">
         <label class="fieldlabel">Ваше имя</label>
         <input class="field" id="pname" placeholder="Как к вам обращаться" autocomplete="name"
-               value="${esc(S.d.me?.fullName ?? tg?.initDataUnsafe?.user?.first_name ?? '')}">
+               value="${esc(S.d.me?.fullName ?? '')}">
         <div class="row"><span class="muted">Телефон</span>
           <span class="name mono">${esc(S.d.me?.phone ?? '')}</span></div>
         <label class="fieldlabel">Что беспокоит — необязательно</label>
@@ -2768,20 +2808,20 @@ function phoneGate(startsAt) {
   `);
 }
 
-/** Ждём, пока номер приедет от Telegram, и продолжаем запись. */
-async function awaitPhone(startsAt, attempts = 20) {
+/**
+ * Ждём, пока номер приедет от Telegram.
+ *
+ * Номер записывает вебхук бота, а не браузер: приложение только видит, что
+ * он появился. Куда идти дальше — дело вызвавшего: с экрана записи это
+ * продолжение записи, из профиля — просто обновлённая карточка.
+ */
+async function awaitPhone(attempts = 20) {
   for (let i = 0; i < attempts; i += 1) {
     await new Promise((r) => setTimeout(r, 1500));
     const me = await api('/me').catch(() => null);
-    if (me?.phone) {
-      S.d.me = me;
-      toast('Номер подтверждён');
-      // Номер спрашивают в двух местах: на пути к записи и в профиле. В
-      // первом случае продолжаем запись, во втором — просто показываем номер.
-      return startsAt ? patConfirm(startsAt) : refresh();
-    }
+    if (me?.phone) { S.d.me = me; toast('Номер подтверждён'); return true; }
   }
-  toast('Номер пока не пришёл. Нажмите «Поделиться номером» в чате с ботом', true);
+  return false;
 }
 
 /**
@@ -3615,24 +3655,50 @@ document.addEventListener('click', async (e) => {
       case 'tobook': return goTab(TABS.findIndex((t) => t.k === 'book'));
       case 'keepappt': return back();
       case 'sharephone': {
+        keepTyped();
+        const was = el.textContent;
         el.disabled = true;
         el.textContent = 'Ждём номер из Telegram…';
-        // В новых клиентах номер запрашивается прямо из приложения; в старых
-        // метода нет, и остаётся кнопка в чате с ботом. Источник истины один
-        // и тот же — служебное сообщение боту, поэтому оба пути сходятся.
-        if (typeof tg?.requestContact === 'function') tg.requestContact(() => {});
-        else tg?.openTelegramLink?.(`https://t.me/${S.d.me?.bot ?? 'stomiko_bot'}?start=phone`);
-        return awaitPhone(d.at);
+        const r = await askContact();
+        if (r === 'отказ') {
+          // Отказ — это ответ, а не поломка: возвращаем кнопку на место, а не
+          // оставляем человека перед вечным «ждём».
+          el.disabled = false; el.textContent = was;
+          return toast('Без номера записаться нельзя: врачу нужно, куда звонить', true);
+        }
+        if (r === 'нельзя') {
+          tg?.openTelegramLink?.(`https://t.me/${S.d.me?.bot ?? 'stomiko_bot'}?start=phone`);
+        }
+        if (await awaitPhone()) return d.at ? patConfirm(d.at) : refresh();
+        el.disabled = false; el.textContent = was;
+        return toast('Номер пока не пришёл. Попробуйте ещё раз', true);
       }
       case 'myplace': {
+        keepTyped();
+        const was = el.textContent;
         el.disabled = true;
         el.textContent = 'Определяем…';
         const point = await askLocation();
-        el.disabled = false;
-        if (!point) return toast('Место не получено. Разрешите доступ в настройках Telegram', true);
+        if (typeof point === 'string') {
+          // Отказ и «клиент не умеет» объясняются на самом экране, каждый
+          // по-своему: одно чинится настройками, другое не чинится вовсе.
+          S.d.geo = point;
+          el.disabled = false; el.textContent = was;
+          return refresh();
+        }
+        S.d.geo = null;
         S.d.me = { ...S.d.me, ...await api('/me/profile',
           { method: 'PUT', body: JSON.stringify(point) }) };
         toast('Место сохранено');
+        return refresh();
+      }
+      case 'geosettings': {
+        keepTyped();
+        // Кнопка ведёт в настройки Telegram, а не чинит доступ сама. Значит,
+        // вернувшись, человек должен увидеть обычное «отправить место», а не
+        // застрявшую жалобу.
+        tg?.LocationManager?.openSettings?.();
+        S.d.geo = null;
         return refresh();
       }
       case 'profile': return go(profileScreen, false);
