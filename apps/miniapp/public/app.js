@@ -272,7 +272,10 @@ function go(fn, ...args) {
  */
 function keepTyped() {
   const n = val('myname');
-  if (n) S.d.me = { ...S.d.me, fullName: n };
+  // Черновик живёт отдельно от ответа сервера. Раньше он подкладывался в
+  // S.d.me — и первый же ответ сервера, где ФИО ещё пустое, затирал его:
+  // человек отправлял место и получал «Как вас записывать в карту?».
+  if (n) S.d.draftName = n;
 }
 
 /** Перерисовать текущий экран на месте, не заводя лишний шаг в истории. */
@@ -437,7 +440,7 @@ function profileScreen(first = false) {
       <div class="card">
         <label class="fieldlabel">Фамилия и имя</label>
         <input class="field" id="myname" autocomplete="name" enterkeyhint="done"
-          placeholder="Каримов Азиз" value="${esc(me.fullName ?? '')}">
+          placeholder="Каримов Азиз" value="${esc(S.d.draftName ?? me.fullName ?? '')}">
         <div class="note">Так вас запишут в карту. Имя из Telegram сюда не
         подставляем: там ник, а не ФИО.</div>
       </div>
@@ -3739,8 +3742,11 @@ document.addEventListener('click', async (e) => {
           return refresh();
         }
         S.d.geo = null;
+        // Набранное имя уезжает вместе с местом: что уже написано, то
+        // сохранено, даже если человек закроет приложение на этом шаге.
+        const draft = (S.d.draftName ?? '').length >= 2 ? { fullName: S.d.draftName } : {};
         S.d.me = { ...S.d.me, ...await api('/me/profile',
-          { method: 'PUT', body: JSON.stringify(point) }) };
+          { method: 'PUT', body: JSON.stringify({ ...point, ...draft }) }) };
         toast('Место сохранено');
         return refresh();
       }
@@ -3770,6 +3776,7 @@ document.addEventListener('click', async (e) => {
         el.disabled = true;
         S.d.me = { ...S.d.me, ...await api('/me/profile',
           { method: 'PUT', body: JSON.stringify({ fullName: name }) }) };
+        S.d.draftName = null;
         if (d.first !== '1') { toast('Сохранено'); return back(); }
         setTabs(S.d.me.mode);
         S.stack = [];
