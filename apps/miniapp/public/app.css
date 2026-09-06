@@ -907,8 +907,12 @@ td { padding: var(--s2) 0; border-top: 1px solid var(--hair); vertical-align: to
 .toast {
   position: fixed;
   left: var(--s3); right: var(--s3);
-  bottom: calc(var(--dock-clear) + var(--s2));
+  /* Сверху: низ занят главной кнопкой и клавиатурой. */
+  top: calc(env(safe-area-inset-top, 0px) + var(--s3));
   z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
   padding: var(--s3) var(--s4);
   border-radius: var(--r);
   background: var(--surface-3);
@@ -918,8 +922,10 @@ td { padding: var(--s2) 0; border-top: 1px solid var(--hair); vertical-align: to
   box-shadow: var(--shadow-3);
   animation: toastIn var(--dur-in) var(--ease);
 }
+.toast[hidden] { display: none; }
+.toast svg { flex: 0 0 auto; width: 22px; height: 22px; }
 .toast.bad { background: var(--bad); color: #fff; }
-@keyframes toastIn { from { opacity: 0; transform: translateY(12px) } }
+@keyframes toastIn { from { opacity: 0; transform: translateY(-12px) } }
 
 /* ══ Переходы ═══════════════════════════════════════════════════════════
    Смена дня меняет ТОЛЬКО ленту, а не весь экран: шапка и полоса дней

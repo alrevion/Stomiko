@@ -80,8 +80,20 @@ const addDays = (d, n) => {
   return x.toLocaleDateString('en-CA', { timeZone: TZ });
 };
 
+/**
+ * Короткое сообщение сверху экрана.
+ *
+ * Сверху, а не снизу: низ занят главной кнопкой и клавиатурой, и сообщение
+ * там либо накрывало кнопку, либо пряталось за клавиатурой. Значок слева
+ * говорит, беда это или подтверждение, раньше, чем прочитан текст; при двух
+ * строках он стоит между ними по центру, при одной — в её ряд.
+ */
+const TOAST_ICON = {
+  ok: '<path d="M20 6 9 17l-5-5"/>',
+  bad: '<circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/>',
+};
 function toast(text, bad = false) {
-  toastEl.textContent = text;
+  toastEl.innerHTML = `${svg(TOAST_ICON[bad ? 'bad' : 'ok'])}<span>${esc(text)}</span>`;
   toastEl.className = 'toast' + (bad ? ' bad' : '');
   toastEl.hidden = false;
   clearTimeout(toast._t);
