@@ -910,21 +910,33 @@ td { padding: var(--s2) 0; border-top: 1px solid var(--hair); vertical-align: to
   /* Сверху: низ занят главной кнопкой и клавиатурой. */
   top: calc(env(safe-area-inset-top, 0px) + var(--s3));
   z-index: 60;
+  /* Сам контейнер невидим и во всю ширину; плашка внутри — по ширине
+     текста и по центру. «Номер подтверждён» на всю ширину экрана выглядел
+     как пустая полоса с двумя словами слева. */
   display: flex;
-  align-items: center;
-  gap: var(--s3);
-  padding: var(--s3) var(--s4);
-  border-radius: var(--r);
-  background: var(--surface-3);
-  color: var(--label);
-  font-size: 14.5px;
-  line-height: 1.45;
-  box-shadow: var(--shadow-3);
+  justify-content: center;
+  pointer-events: none;
   animation: toastIn var(--dur-in) var(--ease);
 }
 .toast[hidden] { display: none; }
+.toast .pill {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  max-width: 100%;
+  padding: var(--s3) var(--s4);
+  border-radius: var(--r);
+  color: #fff;
+  font-size: 14.5px;
+  line-height: 1.45;
+  box-shadow: var(--shadow-3);
+}
 .toast svg { flex: 0 0 auto; width: 22px; height: 22px; }
-.toast.bad { background: var(--bad); color: #fff; }
+/* Цвет — второй носитель смысла после значка: зелёное подтверждает,
+   красное предупреждает. Оттенки фиксированы, а не из темы: это плашка на
+   белом тексте, и в обеих темах она должна читаться одинаково. */
+.toast.ok  .pill { background: #047857; }
+.toast.bad .pill { background: var(--bad); }
 @keyframes toastIn { from { opacity: 0; transform: translateY(-12px) } }
 
 /* ══ Переходы ═══════════════════════════════════════════════════════════

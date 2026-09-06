@@ -105,8 +105,8 @@ const TOAST_ICON = {
   bad: '<circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/>',
 };
 function toast(text, bad = false) {
-  toastEl.innerHTML = `${svg(TOAST_ICON[bad ? 'bad' : 'ok'])}<span>${esc(text)}</span>`;
-  toastEl.className = 'toast' + (bad ? ' bad' : '');
+  toastEl.innerHTML = `<div class="pill">${svg(TOAST_ICON[bad ? 'bad' : 'ok'])}<span>${esc(text)}</span></div>`;
+  toastEl.className = 'toast ' + (bad ? 'bad' : 'ok');
   toastEl.hidden = false;
   clearTimeout(toast._t);
   toast._t = setTimeout(() => { toastEl.hidden = true; }, 4000);
