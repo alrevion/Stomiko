@@ -30,15 +30,27 @@ tg?.expand();
    ponytail: на Android «назад» закрывает клавиатуру, не снимая фокус, —
    кнопка вернётся по нажатию в любое место экрана; следить за высотой
    visualViewport, если это станет жалобой. */
+/**
+ * Флаг выводится из того, где фокус СЕЙЧАС, а не запоминается по событиям.
+ *
+ * Запоминание сломалось на первом же реальном пути: человек печатал имя,
+ * нажал «Поделиться номером», экран перерисовался — и поле с фокусом
+ * просто исчезло из документа. Удаление элемента не даёт focusout, флаг
+ * остался поднятым, и кнопка «Сохранить и продолжить» пропала насовсем.
+ * Проверка по document.activeElement такого состояния не имеет: после
+ * перерисовки фокус на body, значит, никто не печатает.
+ *
+ * Палец проверяется в момент нажатия, а не при загрузке: Telegram Desktop с
+ * подключённым тачскрином меняет это на ходу.
+ */
+function syncTyping() {
+  const on = Boolean(document.activeElement?.matches?.('input, textarea, select'))
+    && matchMedia('(pointer: coarse)').matches;
+  document.body.classList.toggle('typing', on);
+}
 {
-  // Палец проверяется в момент нажатия, а не при загрузке: Telegram Desktop
-  // с подключённым тачскрином меняет это на ходу.
-  const typing = (e, on) => {
-    if (!e.target?.matches?.('input, textarea, select')) return;
-    document.body.classList.toggle('typing', on && matchMedia('(pointer: coarse)').matches);
-  };
-  document.addEventListener('focusin', (e) => typing(e, true));
-  document.addEventListener('focusout', (e) => typing(e, false));
+  document.addEventListener('focusin', syncTyping);
+  document.addEventListener('focusout', () => setTimeout(syncTyping, 0));
   // Галочка на клавиатуре — это Enter. Вне формы браузер на него ничего не
   // делает: клавиатура остаётся, человек жмёт снова и снова. Однострочное
   // поле на Enter отпускаем — клавиатура уходит, кнопка возвращается.
@@ -116,7 +128,7 @@ async function api(path, options = {}) {
   return body;
 }
 
-const render = (html) => { root.innerHTML = html; root.scrollTop = 0; window.scrollTo(0, 0); syncChrome(); };
+const render = (html) => { root.innerHTML = html; root.scrollTop = 0; window.scrollTo(0, 0); syncChrome(); syncTyping(); };
 const S = { stack: [], d: {}, tab: 0 };
 
 /**
@@ -460,7 +472,6 @@ function profileScreen(first = false) {
     <button class="primary" data-act="saveprofile" data-first="${first ? 1 : 0}">${
       first ? 'Сохранить и продолжить' : 'Сохранить'}</button>
   `);
-  if (first) setTimeout(() => document.getElementById('myname')?.focus(), 80);
 }
 
 /**
