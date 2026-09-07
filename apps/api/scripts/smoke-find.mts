@@ -74,7 +74,7 @@ ok(mine?.landmark === 'напротив Чорсу', 'ориентир пока�
 ok(typeof mine?.consultPrice === 'number' && mine.consultPrice > 0, 'цена приёма показана', String(mine?.consultPrice));
 ok(!!mine?.nextSlot, 'ближайшее свободное время посчитано', String(mine?.nextSlot));
 const fields = Object.keys(mine ?? {}).sort().join(',');
-ok(fields === 'address,city,consultPrice,distanceKm,doctor,landmark,name,nextSlot,phone,tenantId',
+ok(fields === 'address,city,consultPrice,distanceKm,doctor,landmark,name,nextSlot,phone,specialties,tenantId',
   'в выдаче нет полей сверх согласованных', fields);
 ok(mine?.distanceKm === null, 'без места человека расстояние не выдумывается', String(mine?.distanceKm));
 

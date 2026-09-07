@@ -18,18 +18,31 @@ export const onboarding = new Hono<{ Bindings: Env; Variables: Vars }>();
  * с боевой — и показала бы врачу цифру, которой в его кабинете не бывает.
  */
 
-/** Какие справочники доступны при регистрации. */
+/**
+ * Что предлагается при регистрации.
+ *
+ * Две разные вещи, которые раньше были одной. Справочник — стартовые
+ * материалы, техкарты и нормы расхода; он подставляется один раз.
+ * Специализации — чем кабинет занимается; их несколько, и пациент ищет
+ * именно по ним.
+ */
 onboarding.get('/templates', async (c) => {
-  const { data, error } = await c.get('sb').rpc('available_templates', {});
-  if (error) return c.json({ error: error.message }, 500);
-  return c.json({ templates: data ?? [] });
+  const sb = c.get('sb');
+  const [tpl, spec] = await Promise.all([
+    sb.rpc('available_templates', {}),
+    sb.rpc('specialty_list', {}),
+  ]);
+  if (tpl.error) return c.json({ error: tpl.error.message }, 500);
+  return c.json({ templates: tpl.data ?? [], specialties: spec.data ?? [] });
 });
 
 onboarding.post('/register', async (c) => {
   const id = c.get('identity');
   const sb = c.get('sb');
-  const b = await c.req.json<{ name?: string; template?: string; doctorName?: string; withDemo?: boolean }>()
-    .catch(() => ({} as Record<string, never>));
+  const b = await c.req.json<{
+    name?: string; template?: string; doctorName?: string; withDemo?: boolean;
+    specialties?: string[];
+  }>().catch(() => ({} as Record<string, never>));
 
   const name = String((b as { name?: string }).name ?? '').trim();
   if (name.length < 2) return c.json({ error: 'укажите название кабинета' }, 400);
@@ -39,11 +52,24 @@ onboarding.post('/register', async (c) => {
     p_subject: id.subject,
     p_name: name,
     p_template_code: (b as { template?: string }).template ?? 'therapist',
-    p_doctor_name: (b as { doctorName?: string }).doctorName ?? null,
+    // Имя врача больше не спрашивается второй раз: человек назвал ФИО при
+    // знакомстве с платформой, и переспрашивать его через две минуты —
+    // сомневаться в том, что он только что написал.
+    p_doctor_name: (b as { doctorName?: string }).doctorName || id.fullName || null,
   });
   if (error) return c.json({ error: error.message }, 400);
 
   const created = prov as { tenantId: string; name: string; publicToken: string };
+
+  // Специализации: их может быть несколько, и справочнику они не равны.
+  // Молча падать нельзя, но и откатывать созданный кабинет из-за списка
+  // специализаций неправильно — врач поправит их в «Показе в поиске».
+  const codes = (b as { specialties?: string[] }).specialties;
+  if (Array.isArray(codes) && codes.length) {
+    await sb.rpc('set_cabinet_specialties', {
+      p_tenant_id: created.tenantId, p_codes: codes,
+    });
+  }
 
   // Демо готовится сразу: врач должен увидеть работающий кабинет в ту же
   // минуту, иначе он закроет приложение и не вернётся.

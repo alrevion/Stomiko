@@ -615,10 +615,18 @@ doctor.post('/cabinet/leave', async (c) => {
  */
 doctor.get('/listing', async (c) => {
   const scope = c.get('scope');
-  const t = await scope.rpc<Record<string, unknown>>('cabinet_listing', {
-    p_tenant_id: scope.tenantId,
+  const [t, spec] = await Promise.all([
+    scope.rpc<Record<string, unknown>>('cabinet_listing', { p_tenant_id: scope.tenantId }),
+    // Справочник специализаций общий: он не принадлежит кабинету и потому
+    // идёт мимо TenantScope, который подставляет p_tenant_id всем подряд.
+    c.get('sb').rpc('specialty_list', {}),
+  ]);
+  return c.json({
+    ...t,
+    listed: Boolean(t?.listed),
+    specialtyList: ((spec.data ?? []) as Record<string, unknown>[])
+      .map((r) => ({ code: r.code, nameRu: r.name_ru })),
   });
-  return c.json({ ...t, listed: Boolean(t?.listed) });
 });
 
 /**
@@ -638,6 +646,31 @@ doctor.put('/license', async (c) => {
       p_tenant_id: scope.tenantId,
       p_number: b.number ?? '',
       p_tin: b.tin ?? null,
+    });
+    return c.json(res);
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+});
+
+/** Специализации кабинета и имя врача, которое видят пациенты. */
+doctor.put('/profile', async (c) => {
+  const scope = c.get('scope');
+  const b = await c.req.json<{ specialties?: string[]; doctor?: string }>()
+    .catch(() => ({} as Record<string, never>));
+  try {
+    if (Array.isArray(b.specialties)) {
+      await scope.rpc('set_cabinet_specialties', {
+        p_tenant_id: scope.tenantId, p_codes: b.specialties,
+      });
+    }
+    if (typeof b.doctor === 'string' && b.doctor.trim()) {
+      await scope.rpc('set_practitioner_name', {
+        p_tenant_id: scope.tenantId, p_name: b.doctor,
+      });
+    }
+    const res = await scope.rpc<Record<string, unknown>>('cabinet_listing', {
+      p_tenant_id: scope.tenantId,
     });
     return c.json(res);
   } catch (err) {

@@ -162,7 +162,7 @@ app.post('/api/me/appointments/:id/cancel', async (c) => {
  */
 app.get('/api/find', async (c) => {
   const sb = c.get('sb');
-  const [cabs, cities] = await Promise.all([
+  const [cabs, cities, specs] = await Promise.all([
     sb.rpc('public_cabinets', {
       p_city: c.req.query('city') ?? null,
       p_query: c.req.query('q') ?? null,
@@ -172,6 +172,10 @@ app.get('/api/find', async (c) => {
       p_lon: c.get('identity').lon,
     }),
     sb.rpc('public_cities', {}),
+    // Названия специализаций едут вместе с выдачей: кабинет отдаёт коды, а
+    // человеку нужны слова, и держать этот словарь копией в приложении
+    // значит однажды показать код вместо названия.
+    sb.rpc('specialty_list', {}),
   ]);
   if (cabs.error) return c.json({ error: cabs.error.message }, 500);
   return c.json({
@@ -186,9 +190,12 @@ app.get('/api/find', async (c) => {
       consultPrice: r.consult_price == null ? null : Number(r.consult_price),
       nextSlot: r.next_slot,
       distanceKm: r.distance_km == null ? null : Number(r.distance_km),
+      specialties: r.specialties ?? [],
     })),
     cities: ((cities.data ?? []) as Record<string, unknown>[])
       .map((r) => ({ city: r.city, cabinets: Number(r.cabinets) })),
+    specialties: ((specs.data ?? []) as Record<string, unknown>[])
+      .map((r) => ({ code: r.code, nameRu: r.name_ru })),
   });
 });
 

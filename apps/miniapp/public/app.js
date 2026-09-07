@@ -573,6 +573,10 @@ function placeScreen() {
   `);
 }
 
+/** Название специализации по коду: словарь приезжает вместе с выдачей. */
+const specName = (code) =>
+  (S.d.find?.specialties ?? []).find((x) => x.code === code)?.nameRu ?? code;
+
 /**
  * Поиск стоматолога.
  *
@@ -587,10 +591,10 @@ async function needLink(city = '', query = '') {
   const load = () => api(`/find?city=${encodeURIComponent(city)}&q=${encodeURIComponent(query)}`);
   // Корень раздела помнится, как и остальные разделы; поиск по конкретному
   // запросу всегда свежий — человек только что его набрал и ждёт ответа.
-  const { cabinets, cities } = (city || query)
+  const { cabinets, cities, specialties } = (city || query)
     ? await (spinner('Ищем кабинеты…'), load())
     : await tabData('book', load, 'Ищем кабинеты…');
-  S.d.find = { city, query, cities };
+  S.d.find = { city, query, cities, specialties };
 
   const when = (iso) => (iso
     ? `${dateLabel(iso.slice(0, 10), { day: 'numeric', month: 'short' })}, ${hhmm(iso)}`
@@ -615,6 +619,8 @@ async function needLink(city = '', query = '') {
           <div class="name">${esc(c.name)}</div>
           <div class="muted">${c.doctor ? `${esc(c.doctor)} · ` : ''}${esc(c.city ?? '')}${
             c.landmark ? `, ${esc(c.landmark)}` : c.address ? `, ${esc(c.address)}` : ''}</div>
+          ${(c.specialties ?? []).length ? `<div class="muted">${
+            c.specialties.map((code) => esc(specName(code))).join(' · ')}</div>` : ''}
           <div class="muted">${c.distanceKm != null
             ? `${c.distanceKm < 1 ? 'меньше километра' : `${c.distanceKm} км от вас`} · ` : ''
             }Ближайшее время: ${when(c.nextSlot)}</div>
@@ -687,6 +693,9 @@ function doctorEntry() {
 async function docListing() {
   spinner('Загрузка…');
   const d = await api('/doctor/listing');
+  // Множество, а не массив: отметки ставятся и снимаются по одной, и
+  // хранить их списком значит каждый раз искать в нём индекс.
+  d.specSet = new Set(d.specialties ?? []);
   S.d.listing = d;
 
   const draw = () => {
@@ -703,6 +712,19 @@ async function docListing() {
         </div>
 
         ${licenseCard(l)}
+
+        <div class="sectiontitle">Чем вы занимаетесь</div>
+        <div class="card">
+          <div class="chips">
+            ${(l.specialtyList ?? []).map((x) => `<button data-spec="${x.code}"
+              class="${l.specSet.has(x.code) ? 'on' : ''}">${esc(x.nameRu)}</button>`).join('')}
+          </div>
+          <div class="note">Пациент ищет по этому, а не по названию кабинета.
+          Отмечайте всё, что делаете.</div>
+          <label class="fieldlabel">Имя врача — его увидят пациенты</label>
+          <input class="field" id="ldoctor" value="${esc(l.doctor ?? '')}"
+            placeholder="Каримов А.А." autocomplete="name">
+        </div>
         <div class="card">
           <label class="fieldlabel">Город</label>
           <input class="field" id="lcity" value="${esc(l.city ?? '')}" placeholder="Ташкент">
@@ -747,6 +769,7 @@ async function docListing() {
     }
   };
   S.d.redraw = () => { readListingForm(); draw(); };
+  S.d.listing.specSet = d.specSet;
   draw();
 }
 
@@ -875,6 +898,7 @@ function readListingForm() {
   if (!l) return;
   l.city = val('lcity'); l.address = val('laddr');
   l.landmark = val('lland'); l.phone = val('lphone');
+  if (document.getElementById('ldoctor')) l.doctor = val('ldoctor');
   if (document.getElementById('licnum')) {
     l.licenseNumber = val('licnum'); l.licenseTin = val('lictin');
   }
@@ -889,8 +913,15 @@ function readListingForm() {
  */
 async function newCabinet() {
   spinner('Загрузка…');
-  const { templates } = await api('/onboarding/templates');
-  S.d.reg = { template: templates[0]?.code ?? 'therapist' };
+  const { templates, specialties } = await api('/onboarding/templates');
+  // Специализаций может быть несколько; справочник один. Раньше это была
+  // одна кнопка, и врач, ставящий коронки, записывался терапевтом только
+  // потому, что с этого справочника начинал.
+  S.d.reg = {
+    template: templates[0]?.code ?? 'therapist',
+    specialties: new Set([templates[0]?.specialty ?? 'therapist']),
+    specList: specialties ?? [],
+  };
 
   const draw = () => render(`
     <header><h1>Новый кабинет</h1></header>
@@ -899,19 +930,37 @@ async function newCabinet() {
         <label class="fieldlabel">Название кабинета</label>
         <input class="field" id="cabname" placeholder="Стоматология на Амира Темура"
           autocomplete="organization" maxlength="80">
-        <label class="fieldlabel">Ваше имя — увидят пациенты</label>
-        <input class="field" id="docname" placeholder="Каримов А.А." autocomplete="name">
+        <div class="note">Имя врача для пациентов возьмём из вашего профиля:
+        ${esc(S.d.me?.fullName || 'вы его уже указали')}. Поменять можно в
+        «Показе в поиске».</div>
       </div>
-      <div class="sectiontitle">Специализация</div>
+
+      <div class="sectiontitle">Чем вы занимаетесь</div>
+      <div class="card">
+        <div class="chips">
+          ${(S.d.reg.specList).map((x) => `<button data-spec="${x.code}"
+            class="${S.d.reg.specialties.has(x.code) ? 'on' : ''}">${esc(x.name_ru)}</button>`).join('')}
+        </div>
+        <div class="note">Отмечайте всё, что делаете — пациент ищет по этому.
+        Список правится когда угодно.</div>
+      </div>
+
+      ${templates.length > 1 ? `<div class="sectiontitle">С какого справочника начать</div>
       <div class="card">
         <div class="chips">
           ${templates.map((t) => `<button data-tpl="${t.code}"
             class="${S.d.reg.template === t.code ? 'on' : ''}">${esc(t.name_ru)}</button>`).join('')}
         </div>
-        <div class="note">От неё зависит справочник: материалы, техкарты и
-        стартовые цены. Всё это потом правится под себя — норм расхода
-        «как у всех» не бывает.</div>
-      </div>
+        <div class="note">Справочник — это материалы, техкарты и стартовые
+        цены. Всё это потом правится под себя: норм расхода «как у всех»
+        не бывает.</div>
+      </div>` : `<div class="card">
+        <div class="note" style="margin:0">Справочник материалов, техкарт и
+        стартовых цен подставим терапевтический — он общий для большинства
+        приёмов. Всё в нём правится под себя, а недостающее вы добавите:
+        норм расхода «как у всех» не бывает.</div>
+      </div>`}
+
       <div class="card">
         <div class="note" style="margin:0">Сначала покажем кабинет на выдуманных
         приёмах, чтобы было понятно, где что. Когда закончите знакомство,
@@ -3629,7 +3678,7 @@ async function patMy() {
    ══════════════════════════════════════════════════════════════════════════ */
 
 document.addEventListener('click', async (e) => {
-  const el = e.target.closest('[data-day],[data-week],[data-appt],[data-act],[data-service],[data-q],[data-tc],[data-svc],[data-date],[data-time],[data-tourgo],[data-city],[data-pick-cab],[data-cancel],[data-resched],[data-rtime],[data-tplan],[data-psvc],[data-tq],[data-trm],[data-tstage],[data-pmethod],[data-mplan],[data-wd],[data-add],[data-rm],[data-rmov],[data-rmline],[data-material],[data-batch],[data-unit],[data-pick],[data-wsvc],[data-reason],[data-patient],[data-visit],[data-free],[data-tab],[data-mode],[data-tpl],[data-plan],[data-amend],[data-tooth],[data-toothitem],[data-vsvc],[data-markcode],[data-markgroup],[data-clearmark]');
+  const el = e.target.closest('[data-day],[data-week],[data-appt],[data-act],[data-service],[data-q],[data-tc],[data-svc],[data-date],[data-time],[data-tourgo],[data-city],[data-pick-cab],[data-cancel],[data-resched],[data-rtime],[data-tplan],[data-psvc],[data-tq],[data-trm],[data-tstage],[data-pmethod],[data-mplan],[data-wd],[data-add],[data-rm],[data-rmov],[data-rmline],[data-material],[data-batch],[data-unit],[data-pick],[data-wsvc],[data-reason],[data-patient],[data-visit],[data-free],[data-tab],[data-mode],[data-tpl],[data-spec],[data-plan],[data-amend],[data-tooth],[data-toothitem],[data-vsvc],[data-markcode],[data-markgroup],[data-clearmark]');
   if (!el) return;
   const d = el.dataset;
   haptic();
@@ -3796,6 +3845,18 @@ document.addEventListener('click', async (e) => {
     if (d.time) return go(patConfirm, d.time);
     if (d.unit) { S.d.form.unitId = d.unit; return S.d.redraw(); }
     if (d.tpl) { S.d.reg.template = d.tpl; return S.d.redraw(); }
+    if (d.spec) {
+      // Список, а не переключатель: врач редко делает что-то одно. Последнюю
+      // отметку снять нельзя — карточка без специализации не отвечает на
+      // первый вопрос пациента.
+      const set = S.d.reg?.specialties ?? S.d.listing?.specSet;
+      if (!set) return;
+      if (set.has(d.spec)) {
+        if (set.size === 1) return toast('Хотя бы одну оставьте', true);
+        set.delete(d.spec);
+      } else set.add(d.spec);
+      return S.d.redraw();
+    }
     if (d.plan) { S.d.plan = d.plan; return S.d.redraw(); }
     if (d.wsvc) { S.d.walkin.serviceId = S.d.walkin.serviceId === d.wsvc ? null : d.wsvc; return S.d.redraw(); }
     if (d.reason) { document.getElementById('xreason').value = d.reason; return; }
@@ -4118,6 +4179,10 @@ document.addEventListener('click', async (e) => {
         readListingForm();
         const l = S.d.listing;
         el.disabled = true;
+        // Специализации и имя врача — часть той же карточки, что и адрес:
+        // сохраняются одним нажатием, а не отдельной кнопкой на каждое поле.
+        await api('/doctor/profile', { method: 'PUT', body: JSON.stringify({
+          specialties: [...l.specSet], doctor: l.doctor }) }).catch(() => {});
         const r = await api('/doctor/listing', { method: 'PUT', body: JSON.stringify({
           city: l.city, address: l.address, landmark: l.landmark, phone: l.phone,
           listed: d.listed === '1', lat: l.lat, lon: l.lon }) });
@@ -4501,7 +4566,8 @@ document.addEventListener('click', async (e) => {
         el.textContent = 'Готовим кабинет…';
         const r = await api('/onboarding/register', {
           method: 'POST',
-          body: JSON.stringify({ name, doctorName: val('docname'), template: S.d.reg.template }),
+          body: JSON.stringify({ name, template: S.d.reg.template,
+            specialties: [...S.d.reg.specialties] }),
         });
         if (r.demo === false) toast('Кабинет создан, но демо-приёмы не наполнились', true);
         tg?.HapticFeedback?.notificationOccurred?.('success');
