@@ -118,6 +118,11 @@
   --r-sm: 12px;
   --r: 16px;
   --r-lg: 22px;
+  /* Радиус плавающего окна. Правило Apple для вложенных скруглений: радиус
+     внутреннего угла = радиус экрана минус отступ. У современных iPhone угол
+     экрана около 55, отступ у нас 16 — отсюда 38. При меньшем радиусе
+     карточка внутри круглого экрана читается как чужеродный прямоугольник. */
+  --r-sheet: 38px;
   --r-pill: 999px;
 
   --shadow-1: 0 1px 2px color-mix(in srgb, var(--text-base) 7%, transparent);
@@ -987,7 +992,11 @@ td { padding: var(--s2) 0; border-top: 1px solid var(--hair); vertical-align: to
      срезаны нижней кромкой листа. Карточка с полем вокруг такой подгонки
      не требует вовсе. */
   padding: var(--s4);
-  padding-bottom: calc(var(--below) + var(--safe-b) + var(--s4));
+  /* Снизу добавляется только невидимая часть вебвью Telegram: она не поле, а
+     поправка на кромку листа. Полоса «домой» лежит ВНУТРИ карточки нижним
+     полем — иначе поле снизу оказывалось втрое больше боковых, и карточка
+     переставала выглядеть карточкой. */
+  padding-bottom: calc(var(--below) + var(--s4));
   animation: scrim-in var(--dur-in) var(--ease);
 }
 @keyframes scrim-in { from { opacity: 0 } to { opacity: 1 } }
@@ -1000,12 +1009,20 @@ td { padding: var(--s2) 0; border-top: 1px solid var(--hair); vertical-align: to
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: var(--s4);
-  border-radius: var(--r-lg);
+  /* Полоса «домой» — внутри карточки: её край остаётся на одном расстоянии
+     от экрана со всех четырёх сторон, а кнопки под полосу не заезжают. */
+  padding-bottom: calc(var(--s4) + var(--safe-b));
+  border-radius: var(--r-sheet);
   background: var(--surface);
   box-shadow: var(--shadow-3);
   animation: modal-in var(--dur-in) var(--ease);
 }
-@keyframes modal-in { from { transform: translateY(16px) } to { transform: none } }
+/* Приезд снизу с проявлением: без прозрачности первые кадры карточка
+   висит у самой кромки и читается как обрезанная. */
+@keyframes modal-in {
+  from { transform: translateY(24px); opacity: 0 }
+  to { transform: none; opacity: 1 }
+}
 
 .modal h2 { margin: 0 0 var(--s2); font-size: 20px; font-weight: 700; letter-spacing: -.2px; }
 .modal .note { margin: 0 0 var(--s3); }
@@ -1018,7 +1035,7 @@ td { padding: var(--s2) 0; border-top: 1px solid var(--hair); vertical-align: to
   /* Прилипает к низу окна: в длинном окне человек должен видеть, чем всё
      кончается, не долистывая. */
   position: sticky;
-  bottom: 0;
+  bottom: var(--safe-b);
   padding-top: var(--s3);
   background: var(--surface);
 }
