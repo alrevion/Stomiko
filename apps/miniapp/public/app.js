@@ -599,11 +599,7 @@ async function needLink(city = '', query = '') {
     : 'времени пока нет');
 
   render(`
-    <header><h1>Найти стоматолога</h1>
-      <span class="sub">${cabinets.length
-        ? `${cabinets.length} ${cabinets.length === 1 ? 'кабинет' : 'кабинета'}${
-            S.d.me?.lat != null ? ', ближайшие сверху' : ' принимают запись'}`
-        : 'по вашему запросу пусто'}</span></header>
+    <header><h1>Найти стоматолога</h1></header>
     <main>
       <div class="card">
         <input class="field" id="findq" placeholder="Название, улица или ориентир"
@@ -699,8 +695,7 @@ async function docListing() {
     const l = S.d.listing;
     const ready = l.city && l.address && l.phone;
     render(`
-      <header><h1>Показ в поиске</h1>
-        <span class="sub">${l.listed ? 'кабинет виден пациентам' : 'кабинет скрыт'}</span></header>
+      <header><h1>Показ в поиске</h1></header>
       <main>
         <div class="card">
           <div class="note" style="margin:0">Пациент, пришедший без вашей ссылки,
@@ -813,10 +808,7 @@ async function adminLicenses() {
   const { pending } = await api('/admin/licenses');
   S.d.pending = pending;
   render(`
-    <header><h1>Проверка лицензий</h1>
-      <span class="sub">${pending.length
-        ? `${pending.length} ${plural(pending.length, 'заявка ждёт', 'заявки ждут', 'заявок ждут')}`
-        : 'очередь пуста'}</span></header>
+    <header><h1>Проверка лицензий</h1></header>
     <main>
       ${pending.length ? pending.map((x) => `
         <div class="card">
@@ -903,7 +895,7 @@ async function newCabinet() {
   S.d.reg = { template: templates[0]?.code ?? 'therapist' };
 
   const draw = () => render(`
-    <header><h1>Новый кабинет</h1><span class="sub">две минуты, и можно работать</span></header>
+    <header><h1>Новый кабинет</h1></header>
     <main>
       <div class="card">
         <label class="fieldlabel">Название кабинета</label>
@@ -1588,8 +1580,7 @@ async function docPatients(query = '') {
   S.d.pquery = query;
 
   const draw = () => render(`
-    <header><h1>Пациенты</h1><span class="sub">${
-      query ? `найдено ${patients.length}` : 'сначала те, кто записан'}</span></header>
+    <header><h1>Пациенты</h1></header>
     <main>
       ${query ? '' : tourCard()}
       <div class="card">
@@ -1815,12 +1806,7 @@ function drawDocRecord() {
     : entries;
 
   render(`
-    <header><h1>Карта: ${esc(S.d.patient?.name ?? '')}</h1>
-      <span class="sub">${roots.length
-        ? `${roots.length} ${plural(roots.length, 'запись', 'записи', 'записей')} · ${
-            new Set(entries.map((e) => e.cabinet)).size} ${
-            plural(new Set(entries.map((e) => e.cabinet)).size, 'кабинет', 'кабинета', 'кабинетов')}`
-        : 'пусто'}</span></header>
+    <header><h1>Карта: ${esc(S.d.patient?.name ?? '')}</h1></header>
     <main>
       ${noTelegram ? `<div class="card"><div class="note" style="margin:0">
         У этого пациента нет Telegram, значит нет и своей карты.</div></div>` : ''}
@@ -1903,10 +1889,7 @@ function drawDocTeeth() {
   const focus = d.tooth ? (states[d.tooth] ?? []) : [];
 
   render(`
-    <header><h1>Зубы: ${esc(S.d.patient?.name ?? '')}</h1>
-      <span class="sub">${d.marks.length
-        ? `${d.marks.length} ${plural(d.marks.length, 'отметка', 'отметки', 'отметок')}`
-        : 'отметок пока нет'}</span></header>
+    <header><h1>Зубы: ${esc(S.d.patient?.name ?? '')}</h1></header>
     <main>
       ${chartCard({
         states, selected: d.tooth ? [d.tooth] : [], milk: d.milk, wide: true,
@@ -2333,7 +2316,7 @@ async function docStock() {
     xray: 'Рентген', resto: 'Реставрация', endo: 'Эндодонтия', hygiene: 'Гигиена', 'прочее': 'Прочее' };
 
   render(`
-    <header><h1>Склад</h1><span class="sub">материалы заводятся здесь</span></header>
+    <header><h1>Склад</h1></header>
     <main>
       ${tourCard()}
       <div class="statgrid">
@@ -2512,7 +2495,7 @@ async function docTechcards() {
   }
 
   render(`
-    <header><h1>Техкарты</h1><span class="sub">нормы расхода на услугу</span></header>
+    <header><h1>Техкарты</h1></header>
     <main>
       <div class="card">
         <div class="note" style="margin:0">Материалы берутся со склада. Чтобы добавить
@@ -2733,7 +2716,7 @@ async function docSchedule() {
     for (const h of S.d.hours) byDay.set(h.weekday, [...(byDay.get(h.weekday) ?? []), h]);
     const ov = S.d.newOverride;
     render(`
-      <header><h1>Рабочие часы</h1><span class="sub">у каждого свои</span></header>
+      <header><h1>Рабочие часы</h1></header>
       <main>
         <div class="card">
           ${[1, 2, 3, 4, 5, 6, 0].map((wd) => {
@@ -3477,10 +3460,7 @@ function drawPatRecord() {
     : entries;
 
   render(`
-    <header><h1>Моя карта</h1><span class="sub">${roots.length
-      ? `${roots.length} ${plural(roots.length, 'запись', 'записи', 'записей')}${
-          cabinets.size > 1 ? ` · ${cabinets.size} ${plural(cabinets.size, 'кабинет', 'кабинета', 'кабинетов')}` : ''}`
-      : 'пока пусто'}</span></header>
+    <header><h1>Моя карта</h1></header>
     <main>
       ${roots.length || (S.d.myTeeth ?? []).length ? `${chartCard({
         marks: toothMarks(entries), states: byTooth(S.d.myTeeth), milk: S.d.recMilk,
@@ -3546,8 +3526,7 @@ async function patMore() {
   const me = S.d.me ?? {};
   const cabinets = me.patientOf ?? [];
   render(`
-    <header><h1>Ещё</h1>
-      <span class="sub">${esc(me.fullName ?? me.firstName ?? 'вы')}</span></header>
+    <header><h1>Ещё</h1></header>
     <main>
       <div class="sectiontitle">Ваши данные</div>
       <div class="picker">
@@ -3607,9 +3586,7 @@ async function patMy() {
   S.d.myAppts = appointments;
   S.d.myPlans = plans;
   render(`
-    <header><h1>Мои записи</h1><span class="sub">${
-      new Set(appointments.map((a) => a.tenantId)).size > 1
-        ? `${new Set(appointments.map((a) => a.tenantId)).size} кабинета` : ''}</span></header>
+    <header><h1>Мои записи</h1></header>
     <main>
       ${(S.d.myPlans ?? []).map((p) => `
       <div class="card ${p.status === 'done' ? '' : 'ok'}" data-mplan="${p.id}">
