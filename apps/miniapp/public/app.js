@@ -470,9 +470,7 @@ function profileScreen(first = false) {
   const me = S.d.me ?? {};
   render(`
     <header><h1>${first ? 'Давайте познакомимся' : 'Ваши данные'}</h1>
-      <span class="sub">${first
-        ? 'спросим один раз, дальше подставится само'
-        : 'меняются в любой момент'}</span></header>
+      </header>
     <main>
       <div class="card">
         <label class="fieldlabel">Фамилия и имя</label>
@@ -539,7 +537,7 @@ function placeCard() {
 function roleScreen() {
   render(`
     <header><h1>Кем вы пришли?</h1>
-      <span class="sub">это не навсегда — переключиться можно в любой момент</span></header>
+      </header>
     <main>
       <div class="picker">
         <button data-act="aspatient"><div class="name">Я пациент</div>
@@ -562,7 +560,7 @@ function roleScreen() {
 function placeScreen() {
   render(`
     <header><h1>Где вы находитесь?</h1>
-      <span class="sub">чтобы показать ближайших к вам стоматологов</span></header>
+      </header>
     <main>
       ${placeCard()}
       <div class="card">
@@ -1011,7 +1009,7 @@ function tourScreen() {
   const left = TOUR.filter((t) => !seen.has(t.k));
   render(`
     <header><h1>Знакомство</h1>
-      <span class="sub">${TOUR.length - left.length} из ${TOUR.length} пройдено</span></header>
+      </header>
     <main>
       <div class="picker">
         ${TOUR.map((t) => `<button data-tourgo="${t.k}">
@@ -1041,7 +1039,7 @@ function tourScreen() {
 /** Экран после очистки: что проверить, прежде чем звать пациентов. */
 function afterTour(wiped) {
   render(`
-    <header><h1>Кабинет ваш</h1><span class="sub">осталось сверить справочник</span></header>
+    <header><h1>Кабинет ваш</h1></header>
     <main>
       <div class="card ok">
         <div class="note" style="margin:0">Стёрто: ${wiped.visits} приёмов,
@@ -1072,7 +1070,7 @@ function afterTour(wiped) {
 function switcher() {
   const me = S.d.me;
   render(`
-    <header><h1>Режим</h1><span class="sub">${esc(me.cabinet || 'кабинет не выбран')}</span></header>
+    <header><h1>Режим</h1></header>
     <main>
       <div class="picker">
         <button data-mode="patient" class="${me.mode === 'patient' ? 'on' : ''}">
@@ -1254,7 +1252,6 @@ function drawWeek() {
   render(`
     <header>
       <h1 id="daytitle">${dateLabel(sel, { day: 'numeric', month: 'long', weekday: 'long' })}</h1>
-      <span class="sub" id="dayhead">${dayHeadHtml(sel)}</span>
       <div class="acts">
         <button class="mini" data-act="block">Занять время</button>
         <button class="mini" data-act="walkin">Без записи</button>
@@ -1266,6 +1263,7 @@ function drawWeek() {
       <button data-week="7" aria-label="Следующая неделя">›</button>
     </div>
     <div class="weekstrip" id="daystrip">${dayChipsHtml(days, sel)}</div>
+    <div class="dayhead" id="dayhead">${dayHeadHtml(sel)}</div>
     <main id="daylist">${tourCard()}${dayListHtml(sel)}</main>
   `);
 }
@@ -1316,7 +1314,7 @@ async function docBlock() {
         </div>`;
 
     render(`
-      <header><h1>Занять время</h1><span class="sub">обед, отъезд, личные дела</span></header>
+      <header><h1>Занять время</h1></header>
       <main>
         <div class="card">
           <label class="fieldlabel">Дата</label>
@@ -1356,7 +1354,7 @@ async function docWalkIn() {
   const { services } = await api('/doctor/services');
   S.d.walkin = { serviceId: null };
   const draw = () => render(`
-    <header><h1>Приём без записи</h1><span class="sub">самотёк</span></header>
+    <header><h1>Приём без записи</h1></header>
     <main>
       <div class="card">
         <label class="fieldlabel">Имя пациента</label>
@@ -1390,8 +1388,7 @@ function docAppointment(apptId) {
   const past = new Date(a.endsAt).getTime() < Date.now();
   render(`
     <header><h1>${esc(blocked ? 'Занятое время' : a.patient)}</h1>
-      <span class="sub">${dateLabel(a.startsAt.slice(0, 10))}, ${hhmm(a.startsAt)}–${hhmm(a.endsAt)}${
-        a.status === 'no_show' ? ' · не пришёл' : past ? ' · прошло' : ''}</span></header>
+      </header>
     <main>
       <div class="card">
         ${a.service ? `<div class="row"><span class="muted">Записан на</span><span class="name">${esc(a.service)}</span></div>` : ''}
@@ -1421,7 +1418,7 @@ function docCancel() {
   const blocked = a.patient === '— занято —';
   render(`
     <header><h1>${blocked ? 'Освободить время' : 'Отмена записи'}</h1>
-      <span class="sub">${esc(a.patient)}, ${hhmm(a.startsAt)}</span></header>
+      </header>
     <main>
       <div class="card">
         <label class="fieldlabel">Причина${blocked ? '' : ' — её увидит пациент'}</label>
@@ -1453,8 +1450,7 @@ async function docVisit(visitId) {
   S.d.visit = v;
 
   render(`
-    <header><h1>${esc(v.patient)}</h1><span class="sub">приём идёт${
-      v.visitDate !== localDate() ? ` · ${dateLabel(v.visitDate)}` : ''}</span></header>
+    <header><h1>${esc(v.patient)}</h1></header>
     <main>
       ${v.services.length ? `<div class="card">
         ${v.services.map((s) => `<div class="service-line">
@@ -1500,7 +1496,7 @@ function docQuantity(service) {
   S.d.quantity = 1;
   const words = { canal: 'каналов', surface: 'поверхностей', tooth: 'зубов', jaw: 'челюстей', session: 'сеансов' };
   const draw = () => render(`
-    <header><h1>${esc(service.name_ru)}</h1><span class="sub">сколько ${words[service.unit_of_norm] ?? 'единиц'}</span></header>
+    <header><h1>${esc(service.name_ru)}</h1></header>
     <main><div class="card">
       <div class="qty">
         <button data-q="-" aria-label="Меньше">−</button>
@@ -1530,7 +1526,7 @@ async function docBreakdown(visitId, known) {
   const margin = v.revenue - cost;
   render(`
     <header><h1>${esc(v.patient)}</h1>
-      <span class="sub">приём закрыт · ${dateLabel(v.visitDate)}</span></header>
+      </header>
     <main>
       ${v.services?.length ? `<div class="card">
         ${v.services.map((s) => `<div class="service-line"><span>${esc(s.name)}${
@@ -1644,7 +1640,7 @@ async function docPatient(patientId) {
 
   render(`
     <header><h1>${esc(p.name)}</h1>
-      <span class="sub">${p.visits.length ? `${p.visits.length} приёмов · ${money(spent)} сум` : 'новый пациент'}</span></header>
+      </header>
     <main>
       <div class="card">
         ${p.phone ? `<div class="row"><span class="muted">Телефон</span>
@@ -1951,7 +1947,7 @@ function docAmend(entryId) {
   if (!e) return back();
   render(`
     <header><h1>Уточнение</h1>
-      <span class="sub">${esc(e.service)}, ${dateLabel(e.occurredOn)}</span></header>
+      </header>
     <main>
       <div class="card">
         <div class="row"><span class="name">${esc(e.service)}${
@@ -2036,7 +2032,7 @@ function drawPlanEdit() {
 
   render(`
     <header><h1>${t.planId ? 'Правка плана' : 'Новый план'}</h1>
-      <span class="sub">${esc(t.patientName)}</span></header>
+      </header>
     <main>
       <div class="card">
         <label class="fieldlabel">Название плана</label>
@@ -2126,10 +2122,7 @@ async function docPlan(planId) {
 
   render(`
     <header><h1>${esc(p.title)}</h1>
-      <span class="sub">${esc(p.patient.name)} · ${
-        p.status === 'draft' ? 'черновик, пациент не видит'
-        : p.status === 'active' ? 'показан пациенту'
-        : p.status === 'done' ? 'выполнен' : 'отменён'}</span></header>
+      </header>
     <main>
       ${stages.map((st) => `
         <div class="sectiontitle">Этап ${st}</div>
@@ -2178,7 +2171,7 @@ async function docPlan(planId) {
 function docPayment(patientId) {
   const b = S.d.money?.balance ?? { debt: 0 };
   render(`
-    <header><h1>Оплата</h1><span class="sub">${esc(S.d.patient?.name ?? '')}</span></header>
+    <header><h1>Оплата</h1></header>
     <main>
       <div class="card ${b.debt > 0 ? 'warn' : 'ok'}">
         <div class="row"><span class="muted">Долг сейчас</span>
@@ -2280,7 +2273,7 @@ async function docMargin() {
     return render(`<header><h1>Сверх материалов</h1></header><div class="empty">Нет закрытых приёмов за период.</div>`);
   }
   render(`
-    <header><h1>Сверх материалов</h1><span class="sub">${from} — ${to}</span></header>
+    <header><h1>Сверх материалов</h1></header>
     <main><div class="card">
       <table>
         <thead><tr><th>Услуга</th><th>Кол-во</th><th>Выручка</th><th>Сверх</th></tr></thead>
@@ -2356,7 +2349,7 @@ async function docMaterial(materialId) {
 
   render(`
     <header><h1>${esc(m.name_ru)}</h1>
-      <span class="sub">${d.unit ? esc(d.unit.name_ru) : ''}${m.reference_price ? ` · ${money(m.reference_price)} сум` : ' · цена не указана'}</span></header>
+      </header>
     <main>
       <div class="card">
         <div class="row"><span class="muted">На складе</span>
@@ -2388,7 +2381,7 @@ function docBatch(batchId) {
   const unit = S.d.material.unit?.name_ru ?? '';
   S.d.batch = b;
   render(`
-    <header><h1>Партия</h1><span class="sub">${esc(m.name_ru)}</span></header>
+    <header><h1>Партия</h1></header>
     <main>
       <div class="card">
         <div class="row"><span class="muted">Остаток</span>
@@ -2426,7 +2419,7 @@ function docMaterialForm(existing) {
   S.d.form = { unitId: existing?.base_unit_id ?? units[0]?.id, editing: existing?.id ?? null };
   const draw = () => render(`
     <header><h1>${existing ? 'Изменить материал' : 'Новый материал'}</h1>
-      <span class="sub">${existing ? '' : 'сначала на склад, потом в техкарту'}</span></header>
+      </header>
     <main>
       <div class="card">
         <label class="fieldlabel">Название</label>
@@ -2459,7 +2452,7 @@ function docMaterialForm(existing) {
 function docReceive() {
   const m = S.d.material.material;
   render(`
-    <header><h1>Приход</h1><span class="sub">${esc(m.name_ru)}</span></header>
+    <header><h1>Приход</h1></header>
     <main><div class="card">
       <label class="fieldlabel">Количество, ${esc(S.d.material.unit?.name_ru ?? '')}</label>
       <input class="field" id="rqty" type="number" inputmode="decimal" min="0" step="0.001" placeholder="10">
@@ -2530,7 +2523,7 @@ async function docTechcardEdit(serviceId) {
     const cost = t.lines.reduce((s, l) => s + (Number(l.price) || 0) * l.normQty, 0);
     const share = t.service.price > 0 ? Math.round((cost / t.service.price) * 100) : 0;
     render(`
-      <header><h1>${esc(t.service.name_ru)}</h1><span class="sub">${money(t.service.price)} сум</span></header>
+      <header><h1>${esc(t.service.name_ru)}</h1></header>
       <main>
         <div class="card">
           <div class="row"><span class="muted">Свои позиции</span><span class="mono">${money(cost)} сум</span></div>
@@ -2574,7 +2567,7 @@ function docMaterialPicker() {
   const used = new Set(S.d.tc.lines.map((l) => l.materialId).filter(Boolean));
   const avail = (S.d.stock?.materials ?? []).filter((m) => !used.has(m.id));
   render(`
-    <header><h1>Материал со склада</h1><span class="sub">${avail.length} доступно</span></header>
+    <header><h1>Материал со склада</h1></header>
     <main>
       ${avail.length ? `<div class="picker">${avail.map((m) => `<button data-pick="${m.id}">
         <div class="name">${esc(m.nameRu)}</div>
@@ -2594,8 +2587,7 @@ async function docBilling() {
 
   const draw = () => render(`
     <header><h1>Подписка</h1>
-      <span class="sub">${sub.frozen ? 'кабинет заморожен'
-        : sub.status === 'trial' ? 'пробный период' : 'оплачено'}</span></header>
+      </header>
     <main>
       <div class="card ${sub.frozen ? 'warn' : sub.daysLeft <= 3 ? 'warn' : 'ok'}">
         <div class="row"><span class="muted">${sub.frozen ? 'Не работает с' : 'Работает до'}</span>
@@ -2631,7 +2623,7 @@ async function docBilling() {
 function frozenScreen(paidUntil) {
   render(`
     <header><h1>Кабинет заморожен</h1>
-      <span class="sub">подписка закончилась ${paidUntil ? dateLabel(String(paidUntil).slice(0, 10)) : ''}</span></header>
+      </header>
     <main>
       <div class="card warn">
         <div class="note" style="margin:0">Календарь, склад и отчёты закрыты.
@@ -2670,7 +2662,7 @@ async function docLink() {
   S.d.link = link;
   render(`
     <header><h1>Ссылка для пациентов</h1>
-      <span class="sub">по ней записываются сами</span></header>
+      </header>
     <main>
       <div class="card">
         <div class="linkbox mono">${esc(link)}</div>
@@ -2688,7 +2680,7 @@ async function docInvite() {
   S.d.link = inv.link;
   render(`
     <header><h1>Приглашение в кабинет</h1>
-      <span class="sub">действует ${inv.expiresHours} часа, один раз</span></header>
+      </header>
     <main>
       <div class="card warn">
         <div class="linkbox mono">${esc(inv.link)}</div>
@@ -2825,7 +2817,7 @@ async function patServices() {
   const upcoming = (my.appointments ?? []).filter((a) => !a.past && a.status !== 'cancelled');
 
   render(`
-    <header><h1>${esc(info.cabinet)}</h1><span class="sub">${info.doctor ? esc(info.doctor) : 'онлайн-запись'}</span></header>
+    <header><h1>${esc(info.cabinet)}</h1></header>
     <main>
       ${S.d.me?.ownLink ? `<div class="card warn">
         <div class="name">Это ваша ссылка для пациентов</div>
@@ -2879,7 +2871,7 @@ async function patSlots(service) {
 
   render(`
     <header><h1>${esc(service.name)}</h1>
-      <span class="sub">${money(service.price)} сум · ${service.durationMinutes} мин</span></header>
+      </header>
     <div class="weekstrip scroll" id="patstrip">${stripHtml(S.d.pickedDate)}</div>
     <main id="pattimes">${timesHtml(days[0])}</main>
   `);
@@ -2937,7 +2929,7 @@ function patCancel(apptId) {
   const a = (S.d.myAppts ?? []).find((x) => x.id === apptId);
   if (!a) return patMy();
   render(`
-    <header><h1>Отменить запись?</h1><span class="sub">освободим время для другого пациента</span></header>
+    <header><h1>Отменить запись?</h1></header>
     <main>
       <div class="card">
         <div class="row"><span class="muted">Услуга</span><span class="name">${esc(a.service)}</span></div>
@@ -2974,7 +2966,7 @@ async function patReschedule(apptId) {
 
   if (!days.length) {
     return render(`
-      <header><h1>Перенести приём</h1><span class="sub">${esc(current.service)}</span></header>
+      <header><h1>Перенести приём</h1></header>
       <main><div class="card warn">
         <div class="name">Свободного времени нет</div>
         <div class="note" style="margin-top:6px">На ближайшие три недели окон не осталось.
@@ -2999,7 +2991,7 @@ async function patReschedule(apptId) {
 
   render(`
     <header><h1>Перенести приём</h1>
-      <span class="sub">${esc(current.service)} · сейчас ${esc(wasLine)}</span></header>
+      </header>
     <div class="weekstrip scroll" id="rstrip">${stripHtml(S.d.pickedDate)}</div>
     <main id="rtimes">${timesHtml(days[0])}</main>
   `);
@@ -3028,7 +3020,7 @@ function patReschedConfirm(startsAt) {
   const r = S.d.resched;
   if (!r) return patMy();
   render(`
-    <header><h1>Перенести?</h1><span class="sub">${esc(r.current.cabinet)}</span></header>
+    <header><h1>Перенести?</h1></header>
     <main>
       <div class="card">
         <div class="row"><span class="muted">Услуга</span><span class="name">${esc(r.current.service)}</span></div>
@@ -3054,7 +3046,7 @@ function phoneGate(startsAt) {
   const s = S.d.service;
   render(`
     <header><h1>Нужен ваш номер</h1>
-      <span class="sub">${esc(s.name)}, ${dateLabel(startsAt.slice(0, 10), { day: 'numeric', month: 'long' })} в ${hhmm(startsAt)}</span></header>
+      </header>
     <main>
       <div class="card">
         <div class="note" style="margin:0">Врач должен знать, куда звонить, если приём
@@ -3100,7 +3092,7 @@ function patPlan(planId) {
   const left = Number(p.total) - Number(p.donePart);
 
   render(`
-    <header><h1>${esc(p.title)}</h1><span class="sub">${esc(p.cabinet)}</span></header>
+    <header><h1>${esc(p.title)}</h1></header>
     <main>
       ${p.stages.map((st) => `
         <div class="sectiontitle">Этап ${st.stage}${
@@ -3364,7 +3356,7 @@ function drawToothPick() {
   const n = p.value.length;
   return render(`
     <header><h1>${esc(p.title ?? 'Какой зуб')}</h1>
-      ${p.sub ? `<span class="sub">${esc(p.sub)}</span>` : ''}</header>
+      </header>
     <main>
       ${chartCard({
         marks: p.marks, selected: p.value, milk: p.milk, wide: true,
