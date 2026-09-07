@@ -323,8 +323,12 @@ function ask({ title, body, confirm = 'Подтверждаю', cancel = 'Отм
     const scrim = document.createElement('div');
     scrim.className = 'scrim';
     scrim.innerHTML = `<div class="modal" role="dialog" aria-modal="true">
-        <h2>${esc(title)}</h2>
-        <div class="note">${body}</div>
+        <div class="modal-head">
+          <h2>${esc(title)}</h2>
+          <button class="modal-x stay" aria-label="Закрыть">${
+            svg('<path d="M18 6 6 18M6 6l12 12"/>')}</button>
+        </div>
+        <div class="modal-body"><div class="note">${body}</div></div>
         <div class="modal-actions">
           <button class="go">${esc(confirm)}</button>
           <button class="stay">${esc(cancel)}</button>
@@ -333,7 +337,9 @@ function ask({ title, body, confirm = 'Подтверждаю', cancel = 'Отм
     const close = (v) => { scrim.remove(); document.removeEventListener('keydown', onKey); resolve(v); };
     const onKey = (e) => { if (e.key === 'Escape') close(false); };
     scrim.querySelector('.go').onclick = () => close(true);
-    scrim.querySelector('.stay').onclick = () => close(false);
+    // Крестик и «Отмена» — одно и то же действие: отказ. Обе кнопки помечены
+    // классом .stay, поэтому обработчик один на обе.
+    scrim.querySelectorAll('.stay').forEach((b) => { b.onclick = () => close(false); });
     // Промах мимо окна закрывает, а не подтверждает.
     scrim.onclick = (e) => { if (e.target === scrim) close(false); };
     document.addEventListener('keydown', onKey);
