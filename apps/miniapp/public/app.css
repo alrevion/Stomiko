@@ -979,17 +979,28 @@ td { padding: var(--s2) 0; border-top: 1px solid var(--hair); vertical-align: to
   -webkit-backdrop-filter: blur(2px);
   display: flex;
   align-items: flex-end;
+  /* Отступ по всему периметру, а не только сверху: окно не приклеено к
+     краям экрана, а лежит поверх него отдельной карточкой. Так же поступает
+     iOS 26 — и у этого есть практический смысл, а не только вид: пока окно
+     упиралось в самый низ, его нижний край приходилось выравнивать по
+     невидимой части вебвью Telegram, и на iPhone кнопки решения оказывались
+     срезаны нижней кромкой листа. Карточка с полем вокруг такой подгонки
+     не требует вовсе. */
+  padding: var(--s4);
+  padding-bottom: calc(var(--below) + var(--safe-b) + var(--s4));
   animation: scrim-in var(--dur-in) var(--ease);
 }
 @keyframes scrim-in { from { opacity: 0 } to { opacity: 1 } }
 
 .modal {
   width: 100%;
-  /* Окно поднимается над невидимой частью вебвью тем же способом, что и
-     всё закреплённое у низа: иначе кнопки уедут под нижнюю кромку листа. */
-  margin-bottom: calc(var(--below) + var(--safe-b));
-  padding: var(--s4) var(--s4) var(--s3);
-  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  /* Высокое окно прокручивается внутри себя, а не вылезает за экран:
+     кнопки решения обязаны быть видны всегда. */
+  max-height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--s4);
+  border-radius: var(--r-lg);
   background: var(--surface);
   box-shadow: var(--shadow-3);
   animation: modal-in var(--dur-in) var(--ease);
@@ -1001,7 +1012,16 @@ td { padding: var(--s2) 0; border-top: 1px solid var(--hair); vertical-align: to
 
 /* Ряд решений. Отмена стоит СПРАВА — под большим пальцем правой руки, и
    промах по краю попадает в неё, а не в необратимое. */
-.modal-actions { display: flex; gap: var(--s2); }
+.modal-actions {
+  display: flex;
+  gap: var(--s2);
+  /* Прилипает к низу окна: в длинном окне человек должен видеть, чем всё
+     кончается, не долистывая. */
+  position: sticky;
+  bottom: 0;
+  padding-top: var(--s3);
+  background: var(--surface);
+}
 .modal-actions button {
   flex: 1;
   min-height: 50px;
