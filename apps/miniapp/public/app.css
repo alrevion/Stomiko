@@ -261,6 +261,15 @@ main { padding: 0 var(--s3) var(--s2); }
 }
 .sectiontitle:first-child { margin-top: var(--s3); }
 
+/* Пояснение под группой списка: не сноска к соседней строке, а подпись ко
+   всей группе — поэтому без полоски слева и с отступом по краям списка. */
+.grouphint {
+  margin: var(--s2) var(--s4) 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--label-3);
+}
+
 .loading, .empty {
   padding: 64px var(--s5);
   text-align: center;
@@ -1071,6 +1080,19 @@ td { padding: var(--s2) 0; border-top: 1px solid var(--hair); vertical-align: to
 .modal-actions button:active { transform: scale(.975); }
 .modal-actions .go { background: var(--bad); color: #fff; }
 .modal-actions .stay { background: var(--surface-3); color: var(--label); }
+
+/* Необратимое решение: заметной остаётся «Отмена», а само удаление —
+   подписью рядом. Красная заливка под пальцем — приглашение нажать, и
+   ровно так однажды и ушёл кабинет со всей историей. */
+.modal-actions.careful { flex-direction: row-reverse; }
+.modal-actions.careful .stay { background: var(--accent); color: var(--accent-fg); }
+.modal-actions.careful .go {
+  flex: 0 1 auto;
+  padding: 0 var(--s4);
+  background: transparent;
+  color: var(--bad);
+  font-weight: 600;
+}
 
 /* ══ Опасная зона ═══════════════════════════════════════════════════════
    Отделена от остальных пунктов пустотой в целый блок: сюда не должен

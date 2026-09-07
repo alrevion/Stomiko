@@ -350,7 +350,7 @@ history.replaceState({ depth: 1 }, '');
  * попадает в неё, а не в необратимое. Касание по подложке тоже отменяет.
  * Возвращает true только на явное подтверждение.
  */
-function ask({ title, body, confirm = 'Подтверждаю', cancel = 'Отмена' }) {
+function ask({ title, body, confirm = 'Подтверждаю', cancel = 'Отмена', danger = false }) {
   return new Promise((resolve) => {
     const scrim = document.createElement('div');
     scrim.className = 'scrim';
@@ -361,7 +361,7 @@ function ask({ title, body, confirm = 'Подтверждаю', cancel = 'Отм
             svg('<path d="M18 6 6 18M6 6l12 12"/>')}</button>
         </div>
         <div class="modal-body"><div class="note">${body}</div></div>
-        <div class="modal-actions">
+        <div class="modal-actions${danger ? ' careful' : ''}">
           <button class="go">${esc(confirm)}</button>
           <button class="stay">${esc(cancel)}</button>
         </div>
@@ -3522,45 +3522,26 @@ function drawPatRecord() {
  * кабинетом не заходил никогда. Врач, который лечится у коллеги, не мог
  * вернуться к себе иначе как случайно.
  */
+/**
+ * «Ещё» — всё про самого человека.
+ *
+ * Строится как список настроек, а не как набор плиток: каждая группа под
+ * своим заголовком, внутри группы — ряды одной высоты, между группами
+ * ничего не висит само по себе. Раньше «Я врач» стоял первой карточкой без
+ * заголовка, пустое «Где вы лечитесь» показывалось абзацем-сноской, а
+ * «Найти стоматолога» отваливался от своей же группы отдельной плиткой.
+ *
+ * Порядок — по частоте, а не по важности: сначала свои данные и свои
+ * кабинеты, потом переключение в кресло врача, в самом низу — работа
+ * платформы, которая касается одного человека на всю систему.
+ */
 async function patMore() {
   const me = S.d.me ?? {};
   const cabinets = me.patientOf ?? [];
   render(`
     <header><h1>Ещё</h1>
-      <span class="sub">${esc(me.fullName ?? me.firstName ?? 'вы')}${
-        me.phone ? ` · ${esc(me.phone)}` : ''}</span></header>
+      <span class="sub">${esc(me.fullName ?? me.firstName ?? 'вы')}</span></header>
     <main>
-      ${me.canBeDoctor ? `<div class="picker">
-        <button data-act="switcher"><div class="name">Вернуться в кабинет</div>
-          <div class="price">вы работаете в ${me.staffOf.length === 1 ? 'кабинете'
-            : `${me.staffOf.length} кабинетах`}</div></button>
-      </div>` : `<div class="picker">
-        <button data-act="iamdoctor"><div class="name">Я врач</div>
-          <div class="price">создать свой кабинет или войти по приглашению</div></button>
-      </div>`}
-
-      <div class="sectiontitle">Где вы лечитесь</div>
-      ${cabinets.length ? `<div class="picker">
-        ${cabinets.map((c) => `<button data-pick-cab="${c.tenantId}">
-          <div class="name">${esc(c.name)}${c.tenantId === me.tenantId ? ' · сейчас' : ''}</div>
-          <div class="price">${c.upcoming
-            ? `${c.upcoming} ${plural(c.upcoming, 'запись', 'записи', 'записей')} впереди`
-            : c.lastVisit ? `последний приём ${dateLabel(c.lastVisit)}` : 'записей нет'}</div>
-        </button>`).join('')}
-      </div>` : `<div class="card"><div class="note" style="margin:0">Вы пока никуда не
-        записывались. Найдите стоматолога в первом разделе или откройте ссылку,
-        которую он вам прислал.</div></div>`}
-      <div class="picker">
-        <button data-act="findcab"><div class="name">Найти другого стоматолога</div>
-          <div class="price">по городу, названию или ориентиру</div></button>
-      </div>
-
-      ${me.isPlatformOwner ? `<div class="sectiontitle">Платформа</div>
-      <div class="picker">
-        <button data-act="adminlic"><div class="name">Проверка лицензий</div>
-          <div class="price">кабинеты, которые просятся в поиск</div></button>
-      </div>` : ''}
-
       <div class="sectiontitle">Ваши данные</div>
       <div class="picker">
         <button data-act="profile"><div class="name">ФИО, номер и место</div>
@@ -3568,6 +3549,37 @@ async function patMore() {
             me.phone || 'номер не подтверждён',
             me.lat != null ? 'место есть' : 'место не отправлено'].join(' · ')}</div></button>
       </div>
+
+      <div class="sectiontitle">Где вы лечитесь</div>
+      <div class="picker">
+        ${cabinets.map((c) => `<button data-pick-cab="${c.tenantId}">
+          <div class="name">${esc(c.name)}${c.tenantId === me.tenantId ? ' · сейчас' : ''}</div>
+          <div class="price">${c.upcoming
+            ? `${c.upcoming} ${plural(c.upcoming, 'запись', 'записи', 'записей')} впереди`
+            : c.lastVisit ? `последний приём ${dateLabel(c.lastVisit)}` : 'записей нет'}</div>
+        </button>`).join('')}
+        <button data-act="findcab">
+          <div class="name">Найти ${cabinets.length ? 'другого ' : ''}стоматолога</div>
+          <div class="price">по городу, названию или ориентиру</div></button>
+      </div>
+      ${cabinets.length ? '' : `<div class="grouphint">Пока вы никуда не записывались.
+        Если стоматолог прислал ссылку — откройте её, и кабинет появится здесь сам.</div>`}
+
+      <div class="sectiontitle">${me.canBeDoctor ? 'Ваш кабинет' : 'Если вы врач'}</div>
+      <div class="picker">
+        ${me.canBeDoctor
+          ? `<button data-act="switcher"><div class="name">Перейти в кабинет</div>
+              <div class="price">вы работаете в ${me.staffOf.length === 1 ? 'кабинете'
+                : `${me.staffOf.length} кабинетах`}</div></button>`
+          : `<button data-act="iamdoctor"><div class="name">Завести свой кабинет</div>
+              <div class="price">или войти по приглашению коллеги</div></button>`}
+      </div>
+
+      ${me.isPlatformOwner ? `<div class="sectiontitle">Платформа</div>
+      <div class="picker">
+        <button data-act="adminlic"><div class="name">Проверка лицензий</div>
+          <div class="price">кабинеты, которые просятся в поиск</div></button>
+      </div>` : ''}
     </main>
   `);
 }
@@ -4077,6 +4089,10 @@ document.addEventListener('click', async (e) => {
                  : ''}`
             : `Вы перестанете видеть <b>${esc(scale.name ?? '')}</b>. Данные останутся у владельца.`,
           confirm: owner ? 'Да, удалить' : 'Выйти',
+          // Необратимое не должно быть самой заметной кнопкой в окне: главной
+          // остаётся «Отмена», а удаление — подписью рядом. Кабинет со всей
+          // историей однажды уже ушёл под палец, целившийся в другое.
+          danger: owner,
         });
         if (!ok) return;
         await api(owner ? '/doctor/cabinet' : '/doctor/cabinet/leave',
