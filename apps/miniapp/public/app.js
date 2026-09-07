@@ -128,7 +128,31 @@ async function api(path, options = {}) {
   return body;
 }
 
-const render = (html) => { root.innerHTML = html; root.scrollTop = 0; window.scrollTo(0, 0); syncChrome(); syncTyping(); };
+/**
+ * Отрисовка экрана.
+ *
+ * Два правила, из которых складывается ощущение отзывчивости:
+ *
+ * Первое — если разметка не изменилась, DOM не трогаем вовсе. Фоновое
+ * обновление раздела чаще всего приносит те же самые данные, и переписывать
+ * ради этого всю страницу значит потерять прокрутку, фокус и выделение
+ * впустую. Именно это читалось как «подлагивает».
+ *
+ * Второе — прокрутку в начало сбрасывает только СМЕНА экрана. Раньше любая
+ * перерисовка дёргала человека наверх посреди чтения.
+ */
+let drawn = { key: null, html: null };
+const render = (html) => {
+  const top = S.stack[S.stack.length - 1];
+  const key = top ? `${top[0].name}:${JSON.stringify(top[1])}` : 'root';
+  if (drawn.key === key && drawn.html === html) return;
+  const sameScreen = drawn.key === key;
+  drawn = { key, html };
+  root.innerHTML = html;
+  if (!sameScreen) { root.scrollTop = 0; window.scrollTo(0, 0); }
+  syncChrome();
+  syncTyping();
+};
 const S = { stack: [], d: {}, tab: 0 };
 
 /**
@@ -171,6 +195,14 @@ const dropCache = (...keys) => {
 
 /** Расписание изменилось — кэш недели и разделов больше не годится. */
 const dropCalendar = () => { S.d.cal = null; dropCache('patients', 'cabinet'); };
+
+/**
+ * Пациент тронул свои записи — помнить прежние нельзя.
+ *
+ * Раздел «Запись» тоже: занятое время в нём считается по тем же приёмам, и
+ * человек, отменивший запись, должен сразу увидеть освободившееся окно.
+ */
+const dropMine = () => dropCache('my', 'book');
 
 /* ── Нижняя навигация ──────────────────────────────────────────────────
    Разделы верхнего уровня стоят внизу постоянно, а не прячутся за кнопкой
@@ -554,9 +586,12 @@ function placeScreen() {
  * врача, а отвечать ей нечем.
  */
 async function needLink(city = '', query = '') {
-  spinner('Ищем кабинеты…');
-  const { cabinets, cities } = await api(
-    `/find?city=${encodeURIComponent(city)}&q=${encodeURIComponent(query)}`);
+  const load = () => api(`/find?city=${encodeURIComponent(city)}&q=${encodeURIComponent(query)}`);
+  // Корень раздела помнится, как и остальные разделы; поиск по конкретному
+  // запросу всегда свежий — человек только что его набрал и ждёт ответа.
+  const { cabinets, cities } = (city || query)
+    ? await (spinner('Ищем кабинеты…'), load())
+    : await tabData('book', load, 'Ищем кабинеты…');
   S.d.find = { city, query, cities };
 
   const when = (iso) => (iso
@@ -2793,8 +2828,9 @@ function patBook() {
 }
 
 async function patServices() {
-  spinner('Загрузка…');
-  const [info, my] = await Promise.all([api('/book/info'), api('/book/my').catch(() => ({ appointments: [] }))]);
+  const [info, my] = await tabData('book', () => Promise.all([
+    api('/book/info'), api('/book/my').catch(() => ({ appointments: [] })),
+  ]), 'Загрузка…');
   S.d.info = info;
   const upcoming = (my.appointments ?? []).filter((a) => !a.past && a.status !== 'cancelled');
 
@@ -3412,11 +3448,10 @@ function recordList(entries, { amendable = false } = {}) {
  * без активного кабинета и показывает записи кабинетов, которых уже нет.
  */
 async function patRecord() {
-  spinner('Открываем карту…');
-  const [rec, teeth] = await Promise.all([
+  const [rec, teeth] = await tabData('card', () => Promise.all([
     api('/me/record').catch(() => ({ entries: [] })),
     api('/me/teeth').catch(() => ({ marks: [] })),
-  ]);
+  ]), 'Открываем карту…');
   S.d.myRecord = rec.entries ?? [];
   S.d.myTeeth = teeth.marks ?? [];
   S.d.recTooth = null;
@@ -3538,7 +3573,6 @@ async function patMore() {
 }
 
 async function patMy() {
-  spinner('Загрузка…');
   // Поздравление живёт один показ: на второй заход это уже не новость.
   // Снимаем флаг СРАЗУ в локальную переменную — экран рисуется после
   // сетевых запросов, и отложенная очистка успела бы сработать раньше.
@@ -3547,10 +3581,10 @@ async function patMy() {
   // Записи по ВСЕМ кабинетам, где человек лечится, а не только по активному:
   // он может ходить к терапевту и к ортопеду, и держать это в двух местах —
   // значит заставлять его переключаться, чтобы увидеть свои же приёмы.
-  const [{ appointments }, plans] = await Promise.all([
+  const [{ appointments }, plans] = await tabData('my', () => Promise.all([
     api('/me/appointments'),
     api('/me/plans').then((r) => r.plans).catch(() => []),
-  ]);
+  ]), 'Загрузка…');
   S.d.myAppts = appointments;
   S.d.myPlans = plans;
   render(`
@@ -4207,6 +4241,7 @@ document.addEventListener('click', async (e) => {
         });
         tg?.HapticFeedback?.notificationOccurred?.('success');
         toast('Запись перенесена. Врач уведомлён.');
+        dropMine();
         // Возврат к списку записей, а не на шаг назад: позади остались сетка
         // времени и подтверждение, и оба уже неактуальны.
         S.stack = [];
@@ -4218,6 +4253,7 @@ document.addEventListener('click', async (e) => {
         el.disabled = true;
         await api(`/me/appointments/${d.id}/cancel`, { method: 'POST' });
         toast('Запись отменена. Врач уведомлён.');
+        dropMine();
         S.stack.pop();
         return patMy();
       }
@@ -4565,6 +4601,7 @@ document.addEventListener('click', async (e) => {
         // первым было предупреждение про уведомления: он сделал дело, а его
         // встречает укор.
         S.d.justBooked = { at: d.at, service: S.d.service.name };
+        dropMine();
         return go(patMy);
       }
       default: return;
@@ -4621,11 +4658,25 @@ document.addEventListener('click', async (e) => {
       return;
     }
     // Первый экран нарисован — можно тихо прогреть остальные разделы.
-    // Три запроса в фоне дешевле, чем заставка на каждое первое нажатие.
-    if (me.role === 'doctor') {
+    // Запросы в фоне дешевле, чем заставка на каждое первое нажатие.
+    //
+    // Условие читало `me.role`, которого в ответе нет вовсе — поле называется
+    // `mode`. Из-за опечатки прогрев не выполнялся НИ РАЗУ, и каждый первый
+    // переход между разделами показывал заставку. Заодно прогреваем разделы
+    // пациента: их больше, и ходят по ним чаще.
+    if (me.mode === 'doctor') {
       tabData('stock', () => api('/doctor/stock'));
       tabData('patients', () => api('/doctor/patients'));
       tabData('cabinet', () => api('/doctor/reports/margin').catch(() => ({ totals: null })));
+    } else {
+      tabData('my', () => Promise.all([
+        api('/me/appointments'),
+        api('/me/plans').then((r) => r.plans).catch(() => []),
+      ]));
+      tabData('card', () => Promise.all([
+        api('/me/record').catch(() => ({ entries: [] })),
+        api('/me/teeth').catch(() => ({ marks: [] })),
+      ]));
     }
   } catch (err) {
     if (err.body?.frozen) return frozenScreen(err.body.paidUntil);
