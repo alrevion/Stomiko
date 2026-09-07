@@ -648,7 +648,14 @@ async function needLink(city = '', query = '') {
   setTimeout(() => {
     const el = document.getElementById('findq');
     if (!el) return;
-    el.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); needLink(city, el.value.trim()); } };
+    el.onkeydown = (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const q = el.value.trim();
+      const top = S.stack[S.stack.length - 1];
+      if (top?.[0] === needLink) S.stack[S.stack.length - 1] = [needLink, [city, q]];
+      needLink(city, q);
+    };
   }, 60);
 }
 
@@ -3879,7 +3886,15 @@ document.addEventListener('click', async (e) => {
     if (d.resched) return go(patReschedule, d.resched);
     if (d.rtime) return go(patReschedConfirm, d.rtime);
     if (d.tourgo) return tourGo(d.tourgo);
-    if (d.city !== undefined) return needLink(d.city, S.d.find?.query ?? '');
+    if (d.city !== undefined) {
+      // Город — это фильтр того же экрана, а не шаг вглубь. Но и запись в
+      // стеке должна знать новый фильтр: иначе «назад» и перерисовка вернут
+      // человека к прежнему городу, которого он уже не выбирал.
+      const q = S.d.find?.query ?? '';
+      const top = S.stack[S.stack.length - 1];
+      if (top?.[0] === needLink) S.stack[S.stack.length - 1] = [needLink, [d.city, q]];
+      return needLink(d.city, q);
+    }
     if (d.pickCab) {
       await api('/me/choose', { method: 'POST', body: JSON.stringify({ tenantId: d.pickCab }) });
       // Кабинет выбран — личность изменилась целиком, перечитываем себя.
@@ -4483,8 +4498,12 @@ document.addEventListener('click', async (e) => {
       }
       case 'patients': return goTab(TABS.findIndex((t) => t.k === 'patients'));
       case 'myrecord': return go(patRecord);
-      case 'findcab': return needLink();
-      case 'iamdoctor': return doctorEntry();
+      // Оба экрана — вход вглубь из «Ещё», а не перерисовка текущего.
+      // Без go() они вставали поверх раздела, не попадая в стек, и кнопка
+      // «назад» на них не появлялась вовсе: выйти можно было только закрыв
+      // приложение.
+      case 'findcab': return go(needLink);
+      case 'iamdoctor': return go(doctorEntry);
       case 'newcabinet': return go(newCabinet);
       case 'tour': return go(tourScreen);
       case 'billing': return go(docBilling);
@@ -4557,6 +4576,9 @@ document.addEventListener('click', async (e) => {
           method: 'PUT', body: JSON.stringify({ notes: val('pnotes'), phone }),
         });
         toast('Сохранено');
+        // Форма правки — пройденный шаг: без этого «назад» с карточки
+        // возвращал в ту же форму, из которой человек только что вышел.
+        S.stack.pop();
         return docPatient(S.d.patient.id);
       }
       case 'noshow': {
