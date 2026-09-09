@@ -2,6 +2,7 @@
  * Проверка нового поведения: склад как источник материалов, отмена с причиной
  * и уведомлением, блокировка времени поверх чужой записи.
  */
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +17,8 @@ function env(key: string): string {
   throw new Error(`нет ${key}`);
 }
 const token = env('TELEGRAM_BOT_TOKEN');
+const sb = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'), { auth: { persistSession: false } });
+
 
 function initData(uid: number, sp?: string): string {
   const f: Record<string, string> = {
@@ -44,8 +47,29 @@ const check = (ok: boolean, label: string, detail = '') => {
   if (!ok) problems.push(label);
 };
 
+/**
+ * Свой кабинет, а не чужой.
+ *
+ * Набор рассчитывал, что в базе уже есть кабинет у tg:900001 — то есть на
+ * следы прошлых прогонов. Стоило базе оказаться чистой (или чужой кабинет
+ * удалить), и проверки падали не на продукте, а на своей же подготовке.
+ */
+async function ownCabinet(uid: number, sb: SupabaseClient, doc: ReturnType<typeof as>) {
+  const { data: old_ } = await sb.from('memberships').select('tenant_id').eq('subject', `tg:${uid}`);
+  for (const m of old_ ?? []) await sb.rpc('delete_tenant', { p_tenant_id: m.tenant_id });
+  await sb.from('app_users').delete().eq('subject', `tg:${uid}`);
+  const reg = await doc('/onboarding/register', {
+    method: 'POST',
+    body: JSON.stringify({ name: 'Кабинет Проверки', doctorName: 'Проверкин П.П.', template: 'therapist' }),
+  });
+  if (reg.status !== 200) throw new Error(`кабинет не создан: ${JSON.stringify(reg.body)}`);
+  await doc('/onboarding/finish', { method: 'POST' });
+  return String(reg.body.tenantId);
+}
+
 async function main() {
   const doc = as(900001);
+  const tid = await ownCabinet(900001, sb, doc);
 
   console.log('── Склад ──');
   const stock = await doc('/doctor/stock');
@@ -88,6 +112,10 @@ async function main() {
   const patUid = 980000 + (Date.now() % 9000);
   const link = (await doc('/doctor/link')).body.token;
   const pat = as(patUid, link);
+  // Номер приходит от Telegram и без него записаться нельзя: подставляем
+  // его тем же путём, что вебхук бота, иначе набор проверяет не продукт.
+  await pat('/me');
+  await sb.rpc('set_verified_phone', { p_subject: `tg:${patUid}`, p_phone: `+99890${1000000 + (Date.now() % 8999999)}` });
   const info = await pat('/book/info');
   const svc = info.body.services[0];
   const slots = await pat(`/book/slots?serviceId=${svc.id}&days=14`);
@@ -129,6 +157,11 @@ async function main() {
   const my = await pat('/book/my');
   const cancelled = (my.body.appointments ?? []).find((a: any) => a.status === 'cancelled');
   check(Boolean(cancelled), 'пациент видит отменённую запись');
+
+  // За собой убираем: осиротевший кабинет проверки попадёт в поиск и в
+  // предпоказ как «проверочные аккаунты не убраны». Один раз уже попал.
+  await sb.rpc('delete_tenant', { p_tenant_id: tid });
+  await sb.from('app_users').delete().like('subject', 'tg:9%');
 
   console.log(`\n${problems.length ? `ПРОБЛЕМЫ: ${problems.join('; ')}` : 'Все проверки пройдены.'}`);
   if (problems.length) process.exit(1);

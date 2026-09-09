@@ -153,7 +153,7 @@ const render = (html) => {
   syncChrome();
   syncTyping();
 };
-const S = { stack: [], d: {}, tab: 0 };
+const S = { stack: [], d: {}, tab: 0, tabTrail: [] };
 
 /**
  * Данные раздела.
@@ -273,6 +273,10 @@ function syncChrome() {
 
 function goTab(i) {
   if (i === S.tab && S.stack.length <= 1) return;
+  // След переходов между разделами: по нему «назад» возвращается туда,
+  // откуда пришли, а не выкидывает из приложения.
+  S.tabTrail.push(S.tab);
+  if (S.tabTrail.length > 12) S.tabTrail.shift();
   S.tab = i;
   S.stack = [];
   haptic('soft');
@@ -310,6 +314,26 @@ function keepTyped() {
   if (n) S.d.draftName = n;
 }
 
+/**
+ * Смена режима: пациент ↔ кабинет.
+ *
+ * Режим меняет ВЕСЬ набор экранов, поэтому личность перечитывается целиком,
+ * а память разделов сбрасывается: у врача и пациента разные разделы под
+ * теми же номерами вкладок.
+ */
+async function switchTo(mode, tenantId) {
+  await api('/me/mode', { method: 'POST', body: JSON.stringify({ mode, tenantId: tenantId ?? null }) });
+  const me = await api('/me');
+  S.d.me = me;
+  S.d.cal = null;
+  dropCache();
+  S.stack = [];
+  S.tab = 0;
+  S.tabTrail = [];
+  setTabs(me.mode);
+  return go(TABS[0].fn);
+}
+
 /** Перерисовать текущий экран на месте, не заводя лишний шаг в истории. */
 function refresh() {
   const [fn, args] = S.stack[S.stack.length - 1] ?? [];
@@ -325,9 +349,24 @@ function back(levels = 1) {
 }
 
 window.addEventListener('popstate', () => {
-  // На корне раздела «назад» закрывает приложение — так ведёт себя всё
-  // остальное на телефоне, и притворяться исключением не нужно.
-  if (S.stack.length <= 1) return void tg?.close?.();
+  // Корень раздела. На Android «назад» — системная кнопка, и человек жмёт её
+  // не задумываясь: закрывать на ней приложение целиком значит выкидывать
+  // из него по неосторожности. Возвращаемся к предыдущему разделу, как это
+  // делает любое приложение с нижней панелью, и закрываемся только с самого
+  // первого — оттуда назад действительно некуда.
+  if (S.stack.length <= 1) {
+    const prev = S.tabTrail.pop();
+    if (prev !== undefined && prev !== S.tab && TABS[prev]) {
+      S.tab = prev;
+      S.stack = [];
+      history.pushState({ depth: 1 }, '');
+      S.stack.push([TABS[prev].fn, []]);
+      TABS[prev].fn();
+      syncChrome();
+      return;
+    }
+    return void tg?.close?.();
+  }
   S.stack.pop();
   const [fn, args] = S.stack[S.stack.length - 1] ?? [];
   if (fn) fn(...args);
@@ -2874,6 +2913,17 @@ async function patServices() {
   ]), 'Загрузка…');
   S.d.info = info;
   const upcoming = (my.appointments ?? []).filter((a) => !a.past && a.status !== 'cancelled');
+  // Осмотр выбран заранее и стоит первым. Человек, у которого болит, не
+  // знает, пломба это или коронка, — просить его назвать услугу значит
+  // просить поставить диагноз до визита. Список ниже нужен тем немногим,
+  // кто уже знает своё лечение.
+  const осмотр = info.services.find((s) => s.checkup)
+    ?? info.services.find((s) => s.consultation);
+  const прочие = info.services.filter((s) => s.id !== осмотр?.id);
+  if (!прочие.some((s) => s.id === S.d.pickedSvc) && S.d.pickedSvc !== осмотр?.id) {
+    S.d.pickedSvc = осмотр?.id ?? info.services[0]?.id;
+  }
+  const выбран = info.services.find((s) => s.id === S.d.pickedSvc) ?? осмотр;
 
   render(`
     <header><h1>${esc(info.cabinet)}</h1></header>
@@ -2890,17 +2940,27 @@ async function patServices() {
           <span class="mono">${dateLabel(a.startsAt.slice(0, 10), { day: 'numeric', month: 'short' })}, ${hhmm(a.startsAt)}</span></div>`).join('')}
         <button class="mini" data-act="myappts">Мои записи</button>
       </div>` : ''}
-      <div class="sectiontitle">Выберите услугу</div>
+      ${осмотр ? `<div class="picker">
+        <button data-svc="${осмотр.id}" class="${S.d.pickedSvc === осмотр.id ? 'on' : ''}">
+          <div class="name">${esc(осмотр.name)}</div>
+          <div class="price">${money(осмотр.price)} сум · ${осмотр.durationMinutes} мин ·
+          выбирать ничего не нужно</div></button>
+      </div>
+      <div class="grouphint">Врач посмотрит и скажет, что делать. Не знать заранее,
+      какая услуга нужна, — это нормально.</div>` : ''}
+
+      ${прочие.length ? `<div class="sectiontitle">Если знаете, что нужно</div>
       <div class="picker">
-        ${info.services.map((s) => `<button data-svc="${s.id}">
+        ${прочие.map((s) => `<button data-svc="${s.id}" class="${S.d.pickedSvc === s.id ? 'on' : ''}">
           <div class="name">${esc(s.name)}</div>
-          <div class="price">${money(s.price)} сум · ${s.durationMinutes} мин${
-            s.consultation ? ' · не знаете, что нужно — выберите это' : ''}</div>
+          <div class="price">${money(s.price)} сум · ${s.durationMinutes} мин</div>
         </button>`).join('')}
       </div>
-      <div class="note" style="margin:12px">Что именно делать, решит врач на осмотре.
-      Если не уверены — записывайтесь на приём, цену пересчитают по факту.</div>
+      <div class="grouphint">Цену пересчитают по факту: что именно делать, решает
+      врач на осмотре.</div>` : ''}
     </main>
+    <button class="primary" data-act="tosled">Далее${
+      выбран ? ` · ${money(выбран.price)} сум` : ''}</button>
   `);
 }
 
@@ -3723,18 +3783,7 @@ document.addEventListener('click', async (e) => {
       toast(d.verdict === 'verified' ? 'Лицензия подтверждена' : 'Заявка отклонена');
       return adminLicenses();
     }
-    if (d.mode) {
-      await api('/me/mode', { method: 'POST', body: JSON.stringify({ mode: d.mode, tenantId: d.tenant }) });
-      // Режим меняет ВЕСЬ набор экранов, поэтому перечитываем себя целиком.
-      const me = await api('/me');
-      S.d.me = me;
-      S.d.cal = null;
-      dropCache();
-      S.stack = [];
-      S.tab = 0;
-      setTabs(me.mode);
-      return go(TABS[0].fn);
-    }
+    if (d.mode) return switchTo(d.mode, d.tenant);
     // Неделя уже загружена — день выбирается из памяти, без запроса и без
     // перерисовки всего экрана.
     if (d.day) return selectDay(d.day);
@@ -3850,7 +3899,13 @@ document.addEventListener('click', async (e) => {
     if (d.material) return go(docMaterial, d.material);
     if (d.batch) return go(docBatch, d.batch);
     if (d.tc) return go(docTechcardEdit, d.tc);
-    if (d.svc) return go(patSlots, S.d.info.services.find((s) => s.id === d.svc));
+    if (d.svc) {
+      // Нажатие по услуге — выбор, а не переход: дальше ведёт «Далее» внизу.
+      // Так у экрана одно главное действие, и промах по строке не уносит
+      // человека к сетке времени, которую он не просил.
+      S.d.pickedSvc = d.svc;
+      return patServices();
+    }
     if (d.date) { S.d.pickedDate = d.date; return S.d.redraw(); }
     if (d.time) return go(patConfirm, d.time);
     if (d.unit) { S.d.form.unitId = d.unit; return S.d.redraw(); }
@@ -4554,6 +4609,11 @@ document.addEventListener('click', async (e) => {
       // Без go() они вставали поверх раздела, не попадая в стек, и кнопка
       // «назад» на них не появлялась вовсе: выйти можно было только закрыв
       // приложение.
+      case 'tosled': {
+        const svc = S.d.info?.services.find((x) => x.id === S.d.pickedSvc);
+        if (!svc) return toast('Выберите услугу', true);
+        return go(patSlots, svc);
+      }
       case 'findcab': return go(needLink);
       case 'iamdoctor': return go(doctorEntry);
       case 'newcabinet': return go(newCabinet);
@@ -4611,7 +4671,18 @@ document.addEventListener('click', async (e) => {
         S.stack = []; S.tab = 0;
         return go(TABS[0].fn);
       }
-      case 'switcher': return go(switcher);
+      case 'switcher': {
+        // Выбор нужен, только когда есть из чего выбирать. У человека с одним
+        // кабинетом «перейти в кабинет» обязано вести в кабинет: спрашивать
+        // «а не остаться ли вам пациентом» после нажатия «перейти в кабинет»
+        // — переспрашивать то, на что уже ответили.
+        const мои = S.d.me?.staffOf ?? [];
+        if (S.d.me?.mode === 'patient' && мои.length === 1) {
+          return switchTo('doctor', мои[0].tenantId);
+        }
+        if (S.d.me?.mode === 'doctor') return switchTo('patient');
+        return go(switcher);
+      }
       case 'useinvite': {
         const raw = val('invcode');
         const code = (raw.match(/inv_[A-Za-z0-9_-]+/) ?? [])[0];

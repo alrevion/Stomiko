@@ -5,6 +5,7 @@
  * разные приложения, что пациент не пролезает в врачебные маршруты, и что
  * запись пациента доходит до календаря врача.
  */
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -22,6 +23,8 @@ function env(key: string): string {
   throw new Error(`в .dev.vars нет ${key}`);
 }
 const token = env('TELEGRAM_BOT_TOKEN');
+const sb = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'), { auth: { persistSession: false } });
+
 
 /** Подписываем initData как Telegram, включая signature в строку проверки. */
 function initData(userId: number, startParam?: string): string {
@@ -56,11 +59,31 @@ const check = (ok: boolean, label: string, detail = '') => {
   if (!ok) problems.push(label);
 };
 
+/**
+ * Свой кабинет, а не чужой.
+ *
+ * Набор рассчитывал, что в базе уже есть кабинет у tg:900001 — то есть на
+ * следы прошлых прогонов. Стоило базе оказаться чистой (или чужой кабинет
+ * удалить), и проверки падали не на продукте, а на своей же подготовке.
+ */
+async function ownCabinet(uid: number, sb: SupabaseClient, doc: ReturnType<typeof as>) {
+  const { data: old_ } = await sb.from('memberships').select('tenant_id').eq('subject', `tg:${uid}`);
+  for (const m of old_ ?? []) await sb.rpc('delete_tenant', { p_tenant_id: m.tenant_id });
+  await sb.from('app_users').delete().eq('subject', `tg:${uid}`);
+  const reg = await doc('/onboarding/register', {
+    method: 'POST',
+    body: JSON.stringify({ name: 'Кабинет Проверки', doctorName: 'Проверкин П.П.', template: 'therapist' }),
+  });
+  if (reg.status !== 200) throw new Error(`кабинет не создан: ${JSON.stringify(reg.body)}`);
+  await doc('/onboarding/finish', { method: 'POST' });
+  return String(reg.body.tenantId);
+}
+
 async function main() {
-  // Тест сам заявляет роль врача через ?startapp=doctor.
   const doc = as(900001);
+  const tid = await ownCabinet(900001, sb, doc);
   const me = await doc('/me');
-  check(me.body.role === 'doctor', 'врач получает роль doctor', String(me.body.role));
+  check(me.body.mode === 'doctor', 'врач получает роль doctor', String(me.body.mode));
 
   console.log('\n── Врач ──');
   const cal = await doc('/doctor/calendar');
@@ -88,7 +111,10 @@ async function main() {
   const patientId = 970000 + Math.floor(Number(process.env.SEED ?? 1));
   const pat = as(patientId, publicToken);
   const pme = await pat('/me');
-  check(pme.body.role === 'patient', 'новый пользователь получает роль patient', String(pme.body.role));
+  check(pme.body.mode === 'patient', 'новый пользователь получает роль patient', String(pme.body.mode));
+  // Номер приходит от Telegram; без него записаться нельзя, и набор проверял
+  // бы не продукт, а собственную неподготовленность.
+  await sb.rpc('set_verified_phone', { p_subject: `tg:${patientId}`, p_phone: `+99890${2000000 + (patientId % 7999999)}` });
 
   const forbidden = await pat('/doctor/calendar');
   check(forbidden.status === 403, 'пациент НЕ пролезает в врачебные маршруты', `HTTP ${forbidden.status}`);
@@ -125,6 +151,11 @@ async function main() {
   const found = (cal2.body.appointments as { source: string; patient: string }[] ?? [])
     .find((a) => a.source === 'patient_link');
   check(Boolean(found), 'в календаре врача видна запись из ссылки', found?.patient ?? '');
+
+  // За собой убираем: осиротевший кабинет проверки попадёт в поиск и в
+  // предпоказ как «проверочные аккаунты не убраны». Один раз уже попал.
+  await sb.rpc('delete_tenant', { p_tenant_id: tid });
+  await sb.from('app_users').delete().like('subject', 'tg:9%');
 
   console.log(`\n${problems.length ? `ПРОБЛЕМЫ: ${problems.join('; ')}` : 'Все проверки пройдены.'}`);
   console.log(`\nСсылка для пациентов: ${publicLink}`);

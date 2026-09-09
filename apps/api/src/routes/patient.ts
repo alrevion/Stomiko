@@ -43,8 +43,13 @@ patient.get('/info', async (c) => {
   // человека ставить себе диагноз, и он либо ошибается, либо уходит.
   // В номенклатуре 804н приёмы врача — это коды группы B01.
   const isConsult = (code: unknown) => String(code ?? '').startsWith('B01.');
+  // Профилактический осмотр — первым и до приёмов: это самая частая причина
+  // прийти к стоматологу и единственная услуга, которую пациент может
+  // выбрать, ничего о своём лечении не зная.
+  const вес = (code: unknown) =>
+    code === 'A01.07.001' ? 0 : isConsult(code) ? 1 : 2;
   const rows = [...(services.data ?? [])].sort((a, b) =>
-    (isConsult(b.code) ? 1 : 0) - (isConsult(a.code) ? 1 : 0) || Number(a.price) - Number(b.price));
+    вес(a.code) - вес(b.code) || Number(a.price) - Number(b.price));
 
   return c.json({
     cabinet: identity.tenantName,
@@ -61,6 +66,9 @@ patient.get('/info', async (c) => {
       durationMinutes: s.duration_minutes,
       unit: s.unit_of_norm,
       consultation: isConsult(s.code),
+      // Профилактический осмотр есть у любого стоматолога и выбран заранее:
+      // человек, у которого болит, не должен ставить себе диагноз до визита.
+      checkup: s.code === 'A01.07.001',
     })),
   });
 });
