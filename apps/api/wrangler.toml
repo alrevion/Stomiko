@@ -1,4 +1,10 @@
 name = "stomiko-api"
+# Аккаунт задан явно. Без него wrangler берёт тот, к которому у токена есть
+# доступ прямо сейчас, — и когда сессия потеряла доступ к аккаунту Alrevion,
+# выкладка молча ушла на личный аккаунт и создала там второй stomiko-api.
+# Команда отвечала «Deployed», приложение на alrevion.workers.dev не менялось,
+# и заметить это можно было только сверив байты выложенного файла.
+account_id = "ef15164ffdf3e190778b8f59cd37cf67"
 main = "src/index.ts"
 compatibility_date = "2026-08-01"
 compatibility_flags = ["nodejs_compat"]
