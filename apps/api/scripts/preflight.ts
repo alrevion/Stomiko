@@ -217,6 +217,19 @@ async function main() {
   // Справочников теперь шесть, и проверять надо каждый: осиротевшая строка
   // в справочнике ортопеда так же испортит ему себестоимость, как испортила
   // бы терапевту, а заметить её некому.
+  // Мёртвые кнопки: атрибут в разметке, которого нет в обработчике нажатий.
+  // Серверные наборы такого не видят — маршрут работает, экран рисуется, а
+  // нажатие не доходит. Проверка дешёвая, поэтому идёт вместе со всеми.
+  try {
+    const { execFileSync } = await import('node:child_process');
+    const out = execFileSync('node', [new URL('../../miniapp/qa/clicks.mjs', import.meta.url).pathname],
+      { encoding: 'utf8' });
+    ok(true, 'все кнопки приложения слушаются', out.trim().replace(/^✓\s*/, ''));
+  } catch (err) {
+    ok(false, 'все кнопки приложения слушаются',
+      String((err as { stderr?: string }).stderr ?? (err as Error).message).trim().split('\n').join(' '));
+  }
+
   const { data: tplStats } = await sb.rpc('template_health', {});
   const по = (tplStats ?? {}) as Record<string, Record<string, number>>;
   const шаблоны = Object.entries(по);

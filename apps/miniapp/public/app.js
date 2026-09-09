@@ -930,7 +930,7 @@ async function newCabinet() {
       <div class="card">
         <label class="fieldlabel">Название кабинета</label>
         <input class="field" id="cabname" placeholder="Стоматология на Амира Темура"
-          autocomplete="organization" maxlength="80">
+          autocomplete="organization" maxlength="80" value="${esc(S.d.reg.name ?? '')}">
         <div class="note">Имя врача для пациентов возьмём из вашего профиля:
         ${esc(S.d.me?.fullName || 'вы его уже указали')}. Поменять можно в
         «Показе в поиске».</div>
@@ -970,7 +970,10 @@ async function newCabinet() {
     </main>
     <button class="primary" data-act="docreate">Создать кабинет</button>
   `);
-  S.d.redraw = draw;
+  // Отметка специализации перерисовывает экран целиком — и без этого стирала
+  // название кабинета, которое врач уже набрал. Ровно та же ловушка, что
+  // была с ФИО на знакомстве: перерисовка обязана помнить набранное.
+  S.d.redraw = () => { S.d.reg.name = val('cabname') || S.d.reg.name; draw(); };
   draw();
   setTimeout(() => document.getElementById('cabname')?.focus(), 80);
 }
@@ -2355,8 +2358,14 @@ async function docStock() {
     byCat.set(k, [...(byCat.get(k) ?? []), m]);
   }
 
+  // Разделы склада. Незнакомый код показывается как есть — это лучше, чем
+  // спрятать материал: врач заводит свои разделы сам, и «ORTHO» вместо
+  // «Ортопедия» он хотя бы увидит и переименует.
   const CAT = { base: 'Базовый набор', anesthesia: 'Анестезия', isolation: 'Изоляция',
-    xray: 'Рентген', resto: 'Реставрация', endo: 'Эндодонтия', hygiene: 'Гигиена', 'прочее': 'Прочее' };
+    xray: 'Рентген', resto: 'Реставрация', endo: 'Эндодонтия', hygiene: 'Гигиена',
+    surgery: 'Хирургия', implant: 'Имплантология', ortho: 'Ортопедия',
+    lab: 'Работы лаборатории', orthodontics: 'Ортодонтия', pedo: 'Детский приём',
+    perio: 'Пародонтология', 'прочее': 'Прочее' };
 
   render(`
     <header><h1>Склад</h1></header>
@@ -2475,7 +2484,7 @@ function docMaterialForm(existing) {
         <label class="fieldlabel">Название</label>
         <input class="field" id="mname" placeholder="Композит пломбировочный" value="${esc(existing?.name_ru ?? '')}">
         <label class="fieldlabel">Категория — необязательно</label>
-        <input class="field" id="mcat" placeholder="resto, endo, hygiene…" value="${esc(existing?.category ?? '')}">
+        <input class="field" id="mcat" placeholder="resto, endo, ortho, lab…" value="${esc(existing?.category ?? '')}">
         <label class="fieldlabel">Цена закупки за единицу, сум</label>
         <input class="field" id="mprice" type="number" inputmode="decimal" min="0" step="1"
           placeholder="75000" value="${existing?.reference_price ?? ''}">
@@ -3679,7 +3688,7 @@ async function patMy() {
    ══════════════════════════════════════════════════════════════════════════ */
 
 document.addEventListener('click', async (e) => {
-  const el = e.target.closest('[data-day],[data-week],[data-appt],[data-act],[data-service],[data-q],[data-tc],[data-svc],[data-date],[data-time],[data-tourgo],[data-city],[data-pick-cab],[data-cancel],[data-resched],[data-rtime],[data-tplan],[data-psvc],[data-tq],[data-trm],[data-tstage],[data-pmethod],[data-mplan],[data-wd],[data-add],[data-rm],[data-rmov],[data-rmline],[data-material],[data-batch],[data-unit],[data-pick],[data-wsvc],[data-reason],[data-patient],[data-visit],[data-free],[data-tab],[data-mode],[data-tpl],[data-spec],[data-plan],[data-amend],[data-tooth],[data-toothitem],[data-vsvc],[data-markcode],[data-markgroup],[data-clearmark]');
+  const el = e.target.closest('[data-day],[data-week],[data-appt],[data-act],[data-service],[data-q],[data-tc],[data-svc],[data-date],[data-time],[data-tourgo],[data-city],[data-pick-cab],[data-cancel],[data-resched],[data-rtime],[data-tplan],[data-psvc],[data-tq],[data-trm],[data-tstage],[data-pmethod],[data-mplan],[data-wd],[data-add],[data-rm],[data-rmov],[data-rmline],[data-material],[data-batch],[data-unit],[data-pick],[data-wsvc],[data-reason],[data-patient],[data-visit],[data-free],[data-tab],[data-mode],[data-tpl],[data-spec],[data-plan],[data-amend],[data-tooth],[data-toothitem],[data-vsvc],[data-markcode],[data-markgroup],[data-clearmark],[data-verdict],[data-open-registry]');
   if (!el) return;
   const d = el.dataset;
   haptic();
@@ -4569,7 +4578,7 @@ document.addEventListener('click', async (e) => {
       }
       case 'reviewhint': return go(afterTour, { visits: 0, appointments: 0, patients: 0, batches: 0 });
       case 'docreate': {
-        const name = val('cabname');
+        const name = val('cabname') || S.d.reg.name || '';
         if (name.length < 2) return toast('Укажите название кабинета', true);
         el.disabled = true;
         el.textContent = 'Готовим кабинет…';
