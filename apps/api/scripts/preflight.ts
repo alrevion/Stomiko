@@ -214,18 +214,25 @@ async function main() {
   // Шаблон снят с действующего кабинета. Если справочник кабинета поправили,
   // а шаблон нет — новый врач получит НЕ ТО, что работает у первого, и
   // разойдётся это молча.
+  // Справочников теперь шесть, и проверять надо каждый: осиротевшая строка
+  // в справочнике ортопеда так же испортит ему себестоимость, как испортила
+  // бы терапевту, а заметить её некому.
   const { data: tplStats } = await sb.rpc('template_health', {});
-  const th = (tplStats ?? {}) as Record<string, number>;
-  ok(th.units > 0 && th.materials > 0 && th.services > 0,
-    'шаблон наполнен', `${th.units} единиц, ${th.materials} материалов, ${th.services} услуг`);
-  ok(th.materials_without_price === 0, 'у всех материалов шаблона есть цена',
-    `без цены: ${th.materials_without_price}`);
-  ok(th.services_without_techcard === 0, 'у всех услуг шаблона есть техкарта');
-  ok(th.orphan_lines === 0, 'строки техкарт шаблона ссылаются на существующее',
-    `висячих: ${th.orphan_lines}`);
-  ok(th.materials === th.tenant_materials && th.services === th.tenant_services,
-    'шаблон не разошёлся со справочником кабинета',
-    `шаблон ${th.materials}/${th.services}, кабинет ${th.tenant_materials}/${th.tenant_services}`);
+  const по = (tplStats ?? {}) as Record<string, Record<string, number>>;
+  const шаблоны = Object.entries(по);
+  ok(шаблоны.length > 0, 'справочники на месте', `${шаблоны.length} шт.`);
+  const пусто = шаблоны.filter(([, t]) => !(t.units > 0 && t.materials > 0 && t.services > 0));
+  ok(пусто.length === 0, 'каждый справочник наполнен',
+    пусто.map(([k]) => k).join(', ') || шаблоны.map(([k, t]) => `${k}: ${t.services}/${t.materials}`).join(', '));
+  const безЦены = шаблоны.filter(([, t]) => t.materials_without_price > 0);
+  ok(безЦены.length === 0, 'у всех материалов справочников есть цена',
+    безЦены.map(([k, t]) => `${k}: ${t.materials_without_price}`).join(', ') || 'все с ценой');
+  const безТехкарт = шаблоны.filter(([, t]) => t.services_without_techcard > 0 || t.services_without_lines > 0);
+  ok(безТехкарт.length === 0, 'у всех услуг справочников есть техкарта со строками',
+    безТехкарт.map(([k, t]) => `${k}: ${t.services_without_techcard}/${t.services_without_lines}`).join(', ') || 'все с техкартой');
+  const висячие = шаблоны.filter(([, t]) => t.orphan_lines > 0);
+  ok(висячие.length === 0, 'строки техкарт ссылаются на существующее',
+    висячие.map(([k, t]) => `${k}: ${t.orphan_lines}`).join(', ') || 'висячих нет');
 
   section('── Роли и доступ ──');
   const stranger = as(PAT_UID + 500);

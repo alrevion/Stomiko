@@ -473,3 +473,16 @@ language sql stable security definer set search_path to 'public','extensions' as
 $$;
 
 revoke all on function public.available_templates() from public, anon, authenticated;
+
+-- Справочник специализаций общий и на чтение никому снаружи не нужен:
+-- приложение получает его функцией под service_role. RLS без единой политики
+-- читается как «забыли написать» — пишем явный запрет, чтобы намерение было
+-- видно и в схеме, и в проверке готовности.
+drop policy if exists specialties_deny_anon on specialties;
+drop policy if exists specialties_deny_authenticated on specialties;
+
+create policy specialties_deny_anon on specialties
+  as restrictive for all to anon using (false) with check (false);
+
+create policy specialties_deny_authenticated on specialties
+  as restrictive for all to authenticated using (false) with check (false);
