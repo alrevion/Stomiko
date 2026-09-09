@@ -91,6 +91,19 @@ const toastEl = document.getElementById('toast');
 const TZ = 'Asia/Tashkent';
 
 const money = (n) => (n == null ? '—' : new Intl.NumberFormat('ru-RU').format(Math.round(n)));
+
+/**
+ * Число со словом в нужном падеже: «1 приём», «2 приёма», «5 приёмов».
+ *
+ * Русский счёт — не «n > 1». «21 приёмов» на карточке пациента читается как
+ * недоделка, а таких мест в приложении несколько, и каждое до сих пор
+ * решало это по-своему или не решало вовсе.
+ */
+const шт = (n, one, few, many) => {
+  const d = Math.abs(n) % 100, e = d % 10;
+  const w = d > 10 && d < 20 ? many : e === 1 ? one : e > 1 && e < 5 ? few : many;
+  return `${n} ${w}`;
+};
 const qtyFmt = (n) => (Number.isInteger(n) ? String(n) : Number(n).toFixed(3).replace(/0+$/, '').replace(/\.$/, ''));
 const hhmm = (iso) => new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', timeZone: TZ });
 const dayNum = (d) => Number(d.slice(8, 10));
@@ -1156,8 +1169,10 @@ function afterTour(wiped) {
     <header><h1>Кабинет ваш</h1></header>
     <main>
       <div class="card ok">
-        <div class="note" style="margin:0">Стёрто: ${wiped.visits} приёмов,
-        ${wiped.appointments} записей, ${wiped.patients} пациентов, ${wiped.batches} партий.
+        <div class="note" style="margin:0">Стёрто: ${шт(wiped.visits, 'приём', 'приёма', 'приёмов')},
+        ${шт(wiped.appointments, 'запись', 'записи', 'записей')},
+        ${шт(wiped.patients, 'пациент', 'пациента', 'пациентов')},
+        ${шт(wiped.batches, 'партия', 'партии', 'партий')}.
         Материалы, техкарты и услуги остались.</div>
       </div>
       <div class="sectiontitle">Что проверить до первого пациента</div>
@@ -1575,7 +1590,8 @@ async function docVisit(visitId) {
                 : '+ зуб'}</button></span>
           <span class="mono">${money(s.price)}</span></div>`).join('')}
         <div class="row" style="margin-top:8px"><span class="muted">Выручка</span><span class="mono name">${money(v.revenue)}</span></div>
-      </div>` : '<div class="sectiontitle">Что делали</div>'}
+      </div>` : ''}
+      <div class="sectiontitle">${v.services.length ? 'Добавить ещё' : 'Что делали'}</div>
       <div class="picker">
         ${services.map((s) => `<button data-service="${s.id}">
           <div class="name">${esc(s.name_ru)}</div>
@@ -1652,7 +1668,7 @@ async function docBreakdown(visitId, known) {
         <div class="row"><span class="muted">Материалы</span><span class="mono">${money(cost)}</span></div>
         <div class="row" style="margin-top:8px"><span class="name">Сверх материалов</span>
           <span class="mono ${margin >= 0 ? 'margin-pos' : 'margin-neg'}" style="font-size:21px">${money(margin)}</span></div>
-        ${snapshot?.has_unpriced ? `<div class="badge warn" style="margin-top:10px">не полностью: ${snapshot.unpriced_lines_count} позиций без цены</div>` : ''}
+        ${snapshot?.has_unpriced ? `<div class="badge warn" style="margin-top:10px">не полностью: ${шт(snapshot.unpriced_lines_count, 'позиция', 'позиции', 'позиций')} без цены</div>` : ''}
         ${reconciles === false ? '<div class="badge overdue" style="margin-top:10px">расхождение с движениями</div>' : ''}
         <div class="note">Не включены зарплата, аренда, амортизация и налоги.</div>
       </div>
@@ -1666,6 +1682,8 @@ async function docBreakdown(visitId, known) {
         </tr>`).join('')}</tbody>
       </table></div>
       <div class="picker" style="margin-top:8px">
+        <button data-pay="${v.patientId}"><div class="name">Принять оплату</div>
+          <div class="price">пациент платит сейчас, а не когда откроют карточку</div></button>
         <button data-patient="${v.patientId}"><div class="name">Карточка пациента</div>
           <div class="price">история приёмов, телефон, заметки</div></button>
       </div>
@@ -1704,7 +1722,7 @@ async function docPatients(query = '') {
             <div class="muted">${p.nextAt
               ? `<b>записан ${dateLabel(p.nextAt.slice(0, 10), { day: 'numeric', month: 'short' })}, ${hhmm(p.nextAt)}</b>`
               : p.lastVisit ? `был ${dateLabel(p.lastVisit)}` : 'ещё не приходил'}${
-              p.visits > 1 ? ` · ${p.visits} приёма` : ''}
+              p.visits > 1 ? ` · ${шт(p.visits, 'приём', 'приёма', 'приёмов')}` : ''}
               ${/* Тёзки в базе — обычное дело, различает их телефон. */ ''}
               ${p.phone ? `<br>${esc(p.phone)}` : '<br>телефона нет'}</div>
           </div>
@@ -2295,9 +2313,9 @@ function docPayment(patientId) {
         <label class="fieldlabel">Сумма</label>
         <input class="field" id="payamount" inputmode="numeric" placeholder="${b.debt > 0 ? b.debt : ''}">
         <label class="fieldlabel">Чем платят</label>
-        <div class="picker row-picker">
+        <div class="chips">
           ${[['cash','Наличные'],['card','Карта'],['transfer','Перевод'],['other','Иначе']]
-            .map(([k, label]) => `<button class="mini ${(S.d.payMethod ?? 'cash') === k ? 'on' : ''}"
+            .map(([k, label]) => `<button class="${(S.d.payMethod ?? 'cash') === k ? 'on' : ''}"
               data-pmethod="${k}">${label}</button>`).join('')}
         </div>
         <label class="fieldlabel">Комментарий — необязательно</label>
@@ -3770,7 +3788,7 @@ async function patMy() {
    ══════════════════════════════════════════════════════════════════════════ */
 
 document.addEventListener('click', async (e) => {
-  const el = e.target.closest('[data-day],[data-week],[data-appt],[data-act],[data-service],[data-q],[data-tc],[data-svc],[data-date],[data-time],[data-tourgo],[data-city],[data-pick-cab],[data-cancel],[data-resched],[data-rtime],[data-tplan],[data-psvc],[data-tq],[data-trm],[data-tstage],[data-pmethod],[data-mplan],[data-wd],[data-add],[data-rm],[data-rmov],[data-rmline],[data-material],[data-batch],[data-unit],[data-pick],[data-wsvc],[data-reason],[data-patient],[data-visit],[data-free],[data-tab],[data-mode],[data-tpl],[data-spec],[data-plan],[data-amend],[data-tooth],[data-toothitem],[data-vsvc],[data-markcode],[data-markgroup],[data-clearmark],[data-verdict],[data-open-registry]');
+  const el = e.target.closest('[data-day],[data-week],[data-appt],[data-act],[data-service],[data-q],[data-tc],[data-svc],[data-date],[data-time],[data-tourgo],[data-city],[data-pick-cab],[data-cancel],[data-resched],[data-rtime],[data-tplan],[data-psvc],[data-tq],[data-trm],[data-tstage],[data-pmethod],[data-mplan],[data-wd],[data-add],[data-rm],[data-rmov],[data-rmline],[data-material],[data-batch],[data-unit],[data-pick],[data-wsvc],[data-reason],[data-pay],[data-patient],[data-visit],[data-free],[data-tab],[data-mode],[data-tpl],[data-spec],[data-plan],[data-amend],[data-tooth],[data-toothitem],[data-vsvc],[data-markcode],[data-markgroup],[data-clearmark],[data-verdict],[data-open-registry]');
   if (!el) return;
   const d = el.dataset;
   haptic();
@@ -3811,6 +3829,10 @@ document.addEventListener('click', async (e) => {
     if (d.day) return selectDay(d.day);
     if (d.week) return docWeek(addDays(S.d.weekStart, Number(d.week)));
     if (d.appt) return go(docAppointment, d.appt);
+    // Оплата открывается через карточку: она грузит долг и платежи, без
+    // которых экран оплаты показал бы нулевой долг. Заодно «назад» с оплаты
+    // ведёт в карточку, а не обратно в закрытый приём.
+    if (d.pay) { await go(docPatient, d.pay); return go(docPayment, d.pay); }
     if (d.patient) return go(docPatient, d.patient);
     if (d.amend) return go(docAmend, d.amend);
 

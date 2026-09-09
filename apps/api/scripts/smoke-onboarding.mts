@@ -93,6 +93,10 @@ const bogus = await doc('/onboarding/seen', { method:'POST', body: JSON.stringif
 ok((bogus.body.onboarding?.seen ?? []).length === 6, 'выдуманный экран не засчитывается');
 
 console.log('\n── Очистка выдуманного ──');
+// Сколько услуг в справочнике — берём до завершения, а не числом в тесте:
+// справочник пополняется (профилактический осмотр приехал миграцией 082),
+// и зашитая восьмёрка ловила не поломку, а собственное устаревание.
+const beforeSvc = ((await doc('/doctor/services')).body.services ?? []).length;
 const fin = await doc('/onboarding/finish', { method:'POST' });
 ok(fin.status === 200, 'обучение завершено',
   `стёрто ${fin.body.wiped.visits} приёмов, ${fin.body.wiped.patients} пациентов`);
@@ -101,7 +105,8 @@ const afterStock = await doc('/doctor/stock');
 ok(afterStock.body.summary.total === 53, 'СПРАВОЧНИК ОСТАЛСЯ', `${afterStock.body.summary.total} материалов`);
 ok(afterStock.body.summary.outOfStock === 53, 'партии стёрты — склад пуст');
 const afterSvc = await doc('/doctor/services');
-ok((afterSvc.body.services ?? []).length === 8, 'услуги и техкарты остались');
+ok((afterSvc.body.services ?? []).length === beforeSvc,
+  'услуги и техкарты остались', `${beforeSvc} услуг`);
 const afterCal = await doc('/doctor/calendar?from=' + new Date(Date.now()-14*864e5).toISOString().slice(0,10) + '&to=' + new Date(Date.now()+7*864e5).toISOString().slice(0,10));
 ok((afterCal.body.appointments ?? []).length === 0, 'выдуманные записи стёрты');
 const { count: pLeft } = await sb.from('patients').select('*', { count:'exact', head:true }).eq('tenant_id', tid);

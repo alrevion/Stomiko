@@ -813,7 +813,13 @@ th {
   text-transform: uppercase;
   color: var(--label-3);
 }
-th:not(:first-child), td:not(:first-child) { text-align: right; }
+/* Числовые колонки не переносятся и не слипаются: «Кол-во» ломалось по
+   дефису на две строки и вплотную упиралось в «Сумму». */
+th:not(:first-child), td:not(:first-child) {
+  text-align: right;
+  padding-left: var(--s3);
+  white-space: nowrap;
+}
 td { padding: var(--s2) 0; border-top: 1px solid var(--hair); vertical-align: top; }
 
 .service-line {
