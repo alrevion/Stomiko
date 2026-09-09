@@ -921,6 +921,7 @@ async function newCabinet() {
     template: templates[0]?.code ?? 'therapist',
     specialties: new Set([templates[0]?.specialty ?? 'therapist']),
     specList: specialties ?? [],
+    templates,
   };
 
   const draw = () => render(`
@@ -3844,7 +3845,15 @@ document.addEventListener('click', async (e) => {
     if (d.date) { S.d.pickedDate = d.date; return S.d.redraw(); }
     if (d.time) return go(patConfirm, d.time);
     if (d.unit) { S.d.form.unitId = d.unit; return S.d.redraw(); }
-    if (d.tpl) { S.d.reg.template = d.tpl; return S.d.redraw(); }
+    if (d.tpl) {
+      S.d.reg.template = d.tpl;
+      // Выбор справочника заодно отмечает свою специализацию: врач, взявший
+      // ортопедический справочник, ортопедом и является. Снять отметку он
+      // может сам — снимать за него нельзя, у кабинета их несколько.
+      const sp = (S.d.reg.templates ?? []).find((t) => t.code === d.tpl)?.specialty;
+      if (sp) S.d.reg.specialties.add(sp);
+      return S.d.redraw();
+    }
     if (d.spec) {
       // Список, а не переключатель: врач редко делает что-то одно. Последнюю
       // отметку снять нельзя — карточка без специализации не отвечает на
