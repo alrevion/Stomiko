@@ -128,9 +128,6 @@
   --shadow-1: 0 1px 2px color-mix(in srgb, var(--text-base) 7%, transparent);
   --shadow-2: 0 4px 16px color-mix(in srgb, var(--text-base) 10%, transparent);
   --shadow-3: 0 10px 32px color-mix(in srgb, var(--text-base) 16%, transparent);
-  /* Тень главной кнопки — цветом самой кнопки, а не серым: серая тень под
-     синей кнопкой выглядит грязью, цветная — свечением. */
-  --shadow-cta: 0 8px 24px color-mix(in srgb, var(--accent) 32%, transparent);
 
   /* Тап-цель. 48 — комфорт, 44 — абсолютный минимум по HIG. */
   --tap: 48px;
@@ -303,8 +300,8 @@ main { padding: 0 var(--s3) var(--s2); }
    не отдав номер, — а нужный ему блок выше, за клавиатурой. Два удара
    акцентом по рамке вместо тоста, которого он не прочитает. */
 @keyframes attn {
-  0%, 100% { box-shadow: 0 0 0 0 var(--accent-soft), var(--shadow-1); }
-  50%      { box-shadow: 0 0 0 8px var(--accent-soft), var(--shadow-1); }
+  0%, 100% { border-color: var(--sep); }
+  50%      { border-color: var(--accent); }
 }
 .card.attn { border-color: var(--accent); animation: attn 700ms var(--ease) 2; }
 .muted-card { opacity: .55; }
@@ -361,7 +358,7 @@ button { font: inherit; }
   position: fixed;
   left: var(--s3); right: var(--s3);
   /* + --below: подняться над той частью вебвью, которой не видно. */
-  bottom: calc(var(--below) + var(--s3) + var(--safe-b));
+  bottom: calc(var(--below) + var(--s3) + var(--safe-b) + var(--kbd, 0px));
   z-index: 30;
   min-height: 54px;
   border: 0;
@@ -371,27 +368,31 @@ button { font: inherit; }
   font-size: 17px;
   font-weight: 650;
   letter-spacing: .1px;
-  box-shadow: var(--shadow-cta);
   transition: transform var(--dur-press) var(--ease), opacity var(--dur-press);
 }
-/* Пока человек печатает, главной кнопки нет.
+/* Кнопка встаёт над клавиатурой, а не прячется под ней.
 
-   Кнопка закреплена у низа окна, а окно при появлении клавиатуры на
-   мгновение сжимается до полоски над ней — и кнопка прыгала на середину
-   экрана, накрывая то самое поле, в которое человек только что нажал.
-   Печатающему она не нужна: он вернётся к ней, закрыв клавиатуру. Флаг
-   ставит app.js по фокусу в поле и только там, где есть палец. */
-body.typing .primary,
-body.typing.has-cta::after {
-  opacity: 0;
-  transform: translateY(24px);
-  pointer-events: none;
-  transition: transform var(--dur-out) var(--ease), opacity var(--dur-out);
-}
+   Сначала я её на время набора убирал: она закреплена у низа окна, окно при
+   появлении клавиатуры на мгновение сжимается, и кнопка прыгала на середину
+   экрана. Но на экране подтверждения записи имя вводят и тут же жмут
+   «Записаться» — а кнопка к этому моменту исчезала, и выйти из формы было
+   нечем: человек видел её долю секунды и оставался с клавиатурой один.
+   --kbd ставит app.js по visualViewport: это высота клавиатуры там, где
+   окно под неё не сжимается (iOS), и ноль там, где сжимается (Android). */
 /* Главное действие раздела и навигация не спорят за один и тот же низ:
    кнопка встаёт НАД доком, а не поверх него. Две панели друг на друге —
    это промахи вместо нажатий. */
 body.has-nav .primary { bottom: calc(var(--below) + var(--dock-clear) + var(--s2)); }
+/* Пока открыта клавиатура, кнопка стоит над ней и над навигацией — и едет
+   вместе с клавиатурой, а не догоняет её анимацией: догоняющая кнопка и
+   есть тот самый прыжок, из-за которого её когда-то пришлось прятать. */
+body.typing .primary {
+  bottom: calc(var(--below) + var(--s3) + var(--safe-b) + var(--kbd, 0px));
+  transition: none;
+}
+/* Навигация на время набора не нужна: она спорит с клавиатурой за низ, а
+   между «Записаться» и клавиатурой ей не место. */
+body.typing .nav, body.typing.has-cta::after { opacity: 0; pointer-events: none; }
 .primary:active { transform: scale(.975); }
 .primary[disabled] { opacity: .45; pointer-events: none; }
 .primary.secondary { background: var(--surface-3); color: var(--label); }
@@ -466,6 +467,37 @@ body.has-cta::after {
   border-right: 2px solid var(--label-4);
   border-bottom: 2px solid var(--label-4);
   transform: rotate(-45deg);
+}
+
+/* Выбранная строка. Список из одинаковых карточек, где одна «уже выбрана»,
+   но ничем не отличается, — это не выбор, а угадывание: человек жмёт
+   «Далее» и не знает, на что записывается. Отличаем тремя способами сразу
+   (подложка, обводка, галочка), потому что одной подложки на ярком солнце
+   и на дешёвом экране может не хватить. */
+.picker button.on {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1.5px var(--accent-line);
+}
+.picker button.on::after {
+  width: 6px; height: 11px;
+  margin-top: -7px;
+  border-color: var(--accent);
+  border-width: 2.5px;
+  transform: rotate(45deg);
+}
+
+/* Шеврон обещает переход на другой экран. В группе, где строку выбирают,
+   он врёт: невыбранные строки не ведут дальше, они ждут нажатия. Пустой
+   кружок — привычная пара к галочке.
+   Группу помечает разметка, а не :has(): выбор бывает разнесён по двум
+   спискам с заголовком между ними — осмотр отдельно, остальное отдельно, —
+   и по дереву они друг о друге не знают. */
+.picker.choice button:not(.on)::after {
+  width: 18px; height: 18px;
+  margin-top: -9px;
+  border: 1.5px solid var(--label-4);
+  border-radius: 50%;
+  transform: none;
 }
 
 /* ══ Чипы ═══════════════════════════════════════════════════════════════*/
@@ -663,7 +695,6 @@ body.has-cta::after {
   -webkit-appearance: none;
   appearance: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 input.field:focus { border-radius: var(--r-pill); }
 /* Многострочное поле капсулой не бывает: у него есть углы текста. */
@@ -950,7 +981,6 @@ td { padding: var(--s2) 0; border-top: 1px solid var(--hair); vertical-align: to
   color: #fff;
   font-size: 14.5px;
   line-height: 1.45;
-  box-shadow: var(--shadow-3);
 }
 .toast svg { flex: 0 0 auto; width: 22px; height: 22px; }
 /* Цвет — второй носитель смысла после значка: зелёное подтверждает,

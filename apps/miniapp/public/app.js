@@ -48,7 +48,25 @@ function syncTyping() {
     && matchMedia('(pointer: coarse)').matches;
   document.body.classList.toggle('typing', on);
 }
+
+/**
+ * Куда встать главной кнопке, когда открыта клавиатура.
+ *
+ * На iOS окно вебвью под клавиатуру не сжимается: `innerHeight` остаётся
+ * прежним, и кнопка, закреплённая у низа окна, оказывается ПОД клавиатурой.
+ * Разница между окном и видимой частью — это и есть высота клавиатуры.
+ * На Android окно сжимается само, разница нулевая, и ничего сдвигать не надо.
+ */
+function syncKeyboard() {
+  const vv = window.visualViewport;
+  const h = vv ? Math.round(innerHeight - vv.height - vv.offsetTop) : 0;
+  // Ноль отрицательным не бывает, а мусорные единицы пикселей при прокрутке
+  // дёргали бы кнопку на каждый кадр.
+  document.body.style.setProperty('--kbd', `${h > 24 ? h : 0}px`);
+}
 {
+  window.visualViewport?.addEventListener('resize', syncKeyboard);
+  window.visualViewport?.addEventListener('scroll', syncKeyboard);
   document.addEventListener('focusin', syncTyping);
   document.addEventListener('focusout', () => setTimeout(syncTyping, 0));
   // Галочка на клавиатуре — это Enter. Вне формы браузер на него ничего не
@@ -149,6 +167,10 @@ const render = (html) => {
   const sameScreen = drawn.key === key;
   drawn = { key, html };
   root.innerHTML = html;
+  // Галочка на клавиатуре должна называться «Готово», а не быть безымянной
+  // стрелкой: без подписи человек её не нажимает и остаётся в поле. Enter
+  // мы и так отпускаем (см. обработчик выше), здесь — только имя клавиши.
+  for (const i of root.querySelectorAll('input:not([enterkeyhint])')) i.enterKeyHint = 'done';
   if (!sameScreen) { root.scrollTop = 0; window.scrollTo(0, 0); }
   syncChrome();
   syncTyping();
@@ -1164,7 +1186,7 @@ function switcher() {
   render(`
     <header><h1>Режим</h1></header>
     <main>
-      <div class="picker">
+      <div class="picker choice">
         <button data-mode="patient" class="${me.mode === 'patient' ? 'on' : ''}">
           <div class="name">Я пациент</div>
           <div class="price">${me.patientOf.length
@@ -2940,7 +2962,7 @@ async function patServices() {
           <span class="mono">${dateLabel(a.startsAt.slice(0, 10), { day: 'numeric', month: 'short' })}, ${hhmm(a.startsAt)}</span></div>`).join('')}
         <button class="mini" data-act="myappts">Мои записи</button>
       </div>` : ''}
-      ${осмотр ? `<div class="picker">
+      ${осмотр ? `<div class="picker choice">
         <button data-svc="${осмотр.id}" class="${S.d.pickedSvc === осмотр.id ? 'on' : ''}">
           <div class="name">${esc(осмотр.name)}</div>
           <div class="price">${money(осмотр.price)} сум · ${осмотр.durationMinutes} мин ·
@@ -2950,7 +2972,7 @@ async function patServices() {
       какая услуга нужна, — это нормально.</div>` : ''}
 
       ${прочие.length ? `<div class="sectiontitle">Если знаете, что нужно</div>
-      <div class="picker">
+      <div class="picker choice">
         ${прочие.map((s) => `<button data-svc="${s.id}" class="${S.d.pickedSvc === s.id ? 'on' : ''}">
           <div class="name">${esc(s.name)}</div>
           <div class="price">${money(s.price)} сум · ${s.durationMinutes} мин</div>
