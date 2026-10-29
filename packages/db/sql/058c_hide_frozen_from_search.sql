@@ -46,7 +46,7 @@ language sql stable security definer set search_path to 'public','extensions' as
         join subscriptions sub on sub.tenant_id = t.id and sub.paid_until >= now()
         left join lateral (
           -- Первичный приём: по нему пациент сравнивает кабинеты. Коды B01 —
-          -- приёмы врача в номенклатуре 804н.
+          -- приёмы врача в номенклатуре услуг.
           select sv.id, sv.price from services sv
            where sv.tenant_id = t.id and sv.bookable
            order by (sv.code like 'B01.%') desc, sv.price

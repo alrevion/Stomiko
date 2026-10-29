@@ -1,84 +1,57 @@
 # Stomiko
 
-МИС для частного стоматологического кабинета в Узбекистане. Продукт — не запись
-пациентов, а **цепочка себестоимости**:
+Clinic software for a private dental practice, built as a Telegram Mini App. [Русская версия](README.ru.md)
+
+Most dental software is a booking calendar. Stomiko is built around the **cost chain** instead:
 
 ```
-запись на кресло → закрытие приёма с телефона → автосписание по техкарте
-   → себестоимость приёма → маржа по услуге за месяц
+chair booking → visit closed from the dentist's phone → materials written off by the treatment card
+   → cost of the visit → margin per service per month
 ```
 
-Кнопки «списать» не существует ни в интерфейсе, ни в публичном API: расход
-запускается единственным событием — фактом закрытия приёма.
+There is no "write off" button anywhere — not in the UI, not in the API. Stock moves only when a visit is closed.
 
-## Раскладка
+**Status:** MVP, built by Alrevion in August–September 2026 and demoed to dentists in Uzbekistan. We found no demand in
+the region and stopped development. Published as part of our portfolio.
 
-| Пакет | Что |
+## Layout
+
+| Package | What it is |
 |---|---|
-| `packages/core` | Аллокатор FEFO и точная арифметика. Чистые функции, ни одного обращения к БД |
-| `packages/db` | SQL-миграции. Источник истины по схеме |
-| `apps/api` | Hono на Cloudflare Workers: Telegram-авторизация, оркестрация закрытия, отчёты |
-| `apps/miniapp` | Telegram Mini App — клиент **врача**. Четыре экрана, без сборки |
+| `packages/core` | FEFO allocator and exact money arithmetic. Pure functions, no database access |
+| `packages/db` | SQL migrations (Postgres / Supabase) — the source of truth for the schema |
+| `apps/api` | Hono on Cloudflare Workers: Telegram sign-in, visit closing, reports |
+| `apps/miniapp` | Telegram Mini App for the dentist. Four screens, no build step |
 
-## Запуск
+Patients book through a Telegram link; the dentist closes the visit on the phone and sees stock and margins.
+
+## What is guaranteed, and how
+
+| Property | How it holds |
+|---|---|
+| Closing a visit is never rejected for lack of stock | A shortage becomes a `shortfall` stock movement, not an error |
+| Visit cost adds up to the last tiyin | Cost by share of batch, cumulative flooring, `bigint` without floats |
+| An unknown price never pretends to be zero | Schema `CHECK unpriced = (cost is null)`; the margin shows "not calculated" |
+| A retry after a network drop never writes off twice | Conditional `UPDATE … WHERE status='open'` inside `apply_visit_close` |
+| Two parallel closes never take the same batch twice | Optimistic `qty_remaining` check plus `FOR UPDATE` in `id` order |
+| Stock never drifts silently | `reconcile_batches()` runs on the stock screen, not only in tests |
+| Tenant isolation | Repository layer `tenantScoped()`; Postgres RLS as defence in depth |
+
+## Run
 
 ```bash
 pnpm install
-pnpm test          # 29 тестов: аллокатор + подпись Telegram
-```
-
-Для работы API нужны два секрета:
-
-```bash
-cp apps/api/.dev.vars.example apps/api/.dev.vars
-```
-
-1. **`SUPABASE_SERVICE_ROLE_KEY`** — панель Supabase → Project Settings → API Keys → `service_role`.
-   Ключ обходит RLS, живёт только в секретах Worker'а и никогда не попадает в клиентский бандл.
-2. **`TELEGRAM_BOT_TOKEN`** — от @BotFather.
-
-```bash
+pnpm test
+cp apps/api/.dev.vars.example apps/api/.dev.vars   # SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, TELEGRAM_BOT_TOKEN
 cd apps/api && pnpm dev
 ```
 
-Деплой:
+## Known simplifications
 
-```bash
-cd apps/api
-wrangler secret put SUPABASE_URL
-wrangler secret put SUPABASE_SERVICE_ROLE_KEY
-wrangler secret put TELEGRAM_BOT_TOKEN
-wrangler deploy
-```
+- Demo binding: `DEMO_AUTO_JOIN=true` attaches the first Telegram user to the only practice. Must be off in production.
+- The margin report spreads cost across services in proportion to revenue; exact split needs `visit_service_id` on stock movements.
+- Supabase types are not generated while the schema still changes often.
 
-Затем у @BotFather: **Bot Settings → Menu Button / Mini App** → URL задеплоенного Worker'а.
+---
 
-## Что гарантировано и чем
-
-| Свойство | Чем держится |
-|---|---|
-| Закрытие приёма нельзя отвергнуть по остатку | Вариант A′: недостача — строка движения `shortfall`, а не ошибка |
-| Себестоимость сходится до копейки | Стоимость через долю партии, накопительный флоринг, `bigint` без float |
-| Неизвестная цена не притворяется нулём | CHECK `unpriced = (cost is null)` в схеме + маржа «не рассчитана» |
-| Повтор после обрыва сети не списывает дважды | Условный `UPDATE ... WHERE status='open'` внутри `apply_visit_close` |
-| Партию не спишут дважды параллельно | Оптимистическая сверка `qty_remaining` + `FOR UPDATE` в порядке `id` |
-| Моляр не завышает фиксированную часть | `scales_with_quantity`: строки блоков не масштабируются на `quantity` |
-| Остаток не расходится тихо | `reconcile_batches()` на складском экране, а не только в тестах |
-| Изоляция тенантов | Репозиторный слой `tenantScoped()`; RLS — защита в глубину (`service_role` её обходит) |
-
-## Известные упрощения
-
-- **Демо-привязка.** `DEMO_AUTO_JOIN=true` привязывает первого вошедшего из Telegram
-  к единственному кабинету. В проде обязано быть выключено.
-- **Себестоимость в отчёте маржи распределяется по услугам пропорционально выручке.**
-  Движения не помнят, какой услуге принадлежат. Для точной разбивки нужен
-  `visit_service_id` в `stock_movements`.
-- **Mini App без сборки.** Четыре экрана не окупают бандлер.
-- **Типы Supabase не сгенерированы.** Пока схема меняется часто, контур
-  `supabase gen types` в CI дороже пользы.
-
-## Артефакты решений
-
-- `.omc/specs/deep-interview-stomiko-mis-uz.md` — спека интервью
-- `.omc/specs/stomiko-techcard-catalog.md` — каталог 76 техкарт, коды 804н
-- `.omc/plans/stomiko-chain-prototype-plan.md` — план после 8 итераций консенсуса
+© 2026 Alrevion. Source published for review; all rights reserved.
