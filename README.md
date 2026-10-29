@@ -1,6 +1,6 @@
 # Stomiko
 
-Clinic software for a private dental practice, built as a Telegram Mini App. [Русская версия](README.ru.md)
+Software for solo dentists — private dentists who work for themselves, without a clinic — built as a Telegram Mini App. [Русская версия](README.ru.md)
 
 Most dental software is a booking calendar. Stomiko is built around the **cost chain** instead:
 
